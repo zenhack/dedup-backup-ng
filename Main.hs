@@ -40,6 +40,10 @@ import qualified System.Posix.IO        as P
 newtype Hash = Hash B.ByteString
     deriving(Show, Eq)
 
+-- | Info about a storage location.
+newtype Store = Store FilePath
+    deriving(Show, Eq)
+
 -- | A block together with its hash.
 data HashedBlock = HashedBlock !Hash !B.ByteString
 
@@ -67,24 +71,23 @@ saveFile filename bytes =
         (Just 0o600)
         P.defaultFileFlags { P.exclusive = True }
 
--- | @'blockFile' storePath digest'@ is the file name in which the block with
--- sha256 hash @digest@ should be stored, given that @storePath@ is the top-level
--- path to the store.
-blockFile :: FilePath -> Hash -> FilePath
-blockFile storePath (Hash digest) =
+-- | @'blockFile' store digest'@ is the file name in which the block with
+-- sha256 hash @digest@ should be saved within the given store.
+blockFile :: Store -> Hash -> FilePath
+blockFile (Store storePath) (Hash digest) =
     let hashname@(c1:c2:_) = B8.unpack $ Base16.encode digest
     in storePath ++ "/sha256/" ++ [c1,c2] ++ "/" ++ hashname
 
--- | @'emit' storePath block@ Saves @block@ to the store, If the block
+-- | @'emit' store block@ Saves @block@ to the store. If the block
 -- is already present, this is a no-op.
-emit :: FilePath -> HashedBlock -> IO ()
-emit storePath (HashedBlock digest bytes) =
-    saveFile (blockFile storePath digest) bytes
+emit :: Store -> HashedBlock -> IO ()
+emit store (HashedBlock digest bytes) =
+    saveFile (blockFile store digest) bytes
 
--- @'loadBlock@ storePath digest@ returns the block corresponding to the
--- given sha256 hash, from the store at @storePath@.
-loadBlock :: FilePath -> Hash -> IO B.ByteString
-loadBlock storePath digest = B.readFile (blockFile storePath digest)
+-- @'loadBlock@ store digest@ returns the block corresponding to the
+-- given sha256 hash from @store@.
+loadBlock :: Store -> Hash -> IO B.ByteString
+loadBlock store digest = B.readFile (blockFile store digest)
 
 -- | Read bytestrings from the handle in chunks of size 'blockSize'.
 --
@@ -106,7 +109,7 @@ doIt filename = bracket
     $ \h -> runConduit $
         hBlocks h .|
         mapC hash .|
-        mapM_C (emit "/tmp/bar")
+        mapM_C (emit (Store "/tmp/bar"))
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@.
