@@ -141,8 +141,7 @@ saveBlob store size h = do
         hBlocks h .|
         takeC numBlocks .|
         mapC hash .|
-        buildTree treeDepth .|
-        saveBlocks store .|
+        buildTree store treeDepth .|
         lastC
     return $ BlobRef treeDepth digest
 
@@ -183,12 +182,12 @@ blocksForSize size = fromIntegral $
 -- | @'buildTree' size@ builds the tree for a blob of size @size@ bytes. It
 -- expects the raw (leaf) blocks of the blob to be its input, and yields the tree
 -- in post-order (i.e. each interior node is yielded after its children).
-buildTree :: MonadIO m => Int64 -> ConduitM HashedBlock HashedBlock m ()
+buildTree :: MonadIO m => Store -> Int64 -> ConduitM HashedBlock HashedBlock m ()
 -- We should only hit the first case if the blob is empty; otherwise we won't
 -- recurse down that far.
-buildTree 0 = yield $ hash $ B8.pack ""
-buildTree 1 = mapC id
-buildTree n = buildNodes .| buildTree (n-1)
+buildTree store 0 = yield (hash $ B8.pack "") .| saveBlocks store
+buildTree store 1 = saveBlocks store
+buildTree store n = saveBlocks store .| buildNodes .| buildTree store (n-1)
 
 
 -- | Build interior nodes from the incoming stream. The incoming blocks are
@@ -208,15 +207,6 @@ buildNodes = go 0 mempty where
             item <- await
             case item of
                 Just block@(HashedBlock (Hash digest) _) -> do
-                    -- FIXME: we can't yield the blocks here; this is what's
-                    -- breaking things when the depth > 2. Doing this causes the
-                    -- blocks to be read by higher levels in the stack, which is
-                    -- not what we want. We should just change things to save the
-                    -- blocks before passing them to us, not after.
-                    --
-                    -- I'm holding off on this until I force myself to write some
-                    -- tests.
-                    yield block
                     go (bufSize + hashSize) (buf <> Builder.byteString digest)
                 Nothing ->
                     yield $ buildHashes buf
