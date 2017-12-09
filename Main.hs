@@ -100,16 +100,21 @@ hBlocks handle = do
         yield block
         hBlocks handle
 
+-- | Save all blocks read from the handle to the store. TODO: change this so
+-- it also stores & returns enough info to reconstruct the blob.
+saveBlob :: Store -> Handle -> IO ()
+saveBlob store h = runConduit $
+    hBlocks h .|
+    mapC hash .|
+    mapM_C (saveBlock store)
+
 -- | Placeholder during experimentation. This stores each of the blocks of
 -- the named file in the store at /tmp/bar.
 doIt :: FilePath -> IO ()
 doIt filename = bracket
     (openBinaryFile filename ReadMode)
     hClose
-    $ \h -> runConduit $
-        hBlocks h .|
-        mapC hash .|
-        mapM_C (saveBlock (Store "/tmp/bar"))
+    (saveBlob $ Store "/tmp/bar")
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@.
