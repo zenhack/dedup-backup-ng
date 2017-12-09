@@ -15,9 +15,9 @@ build-type:          Simple
 extra-source-files:  ChangeLog.md
 cabal-version:       >=1.10
 
-executable ddb-ng
-  main-is:             Main.hs
-  -- other-modules:
+library ddb-ng-lib
+  exposed-modules:
+    DedupBackupNG
   build-depends:
       base >=4.10 && <4.11
     , cryptohash-sha256 >=0.11 && <0.12
@@ -26,5 +26,22 @@ executable ddb-ng
     , bytestring >=0.10 && <0.11
     , base16-bytestring >=0.1 && <0.2
     , unix >=2.7 && <2.8
-  hs-source-dirs:      src
+  hs-source-dirs:      lib
   default-language:    Haskell2010
+
+executable ddb-ng
+  main-is:             Main.hs
+  build-depends:
+      base
+    , ddb-ng-lib
+  hs-source-dirs:      exe
+  default-language:    Haskell2010
+
+test-suite tests
+  type: exitcode-stdio-1.0
+  main-is: TestMain.hs
+  build-depends:
+      base
+    , ddb-ng-lib
+  hs-source-dirs: tests
+  default-language: Haskell2010

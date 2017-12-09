@@ -26,7 +26,7 @@
 -- The blocks do not store any other metadata; reading back a blob requires
 -- knowing the hash of the root block of its tree, and the depth of the tree.
 {-# LANGUAGE Rank2Types #-}
-module Main where
+module DedupBackupNG where
 
 import qualified Crypto.Hash.SHA256 as SHA256
 
@@ -234,4 +234,5 @@ initStore dir = forM_ [0,1..0xff] $ \n -> do
     createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
 
 -- | Placeholder for main, while we're still experimenting.
+main :: IO ()
 main = return ()
