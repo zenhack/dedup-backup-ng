@@ -78,10 +78,10 @@ saveFile filename bytes =
         (Just 0o600)
         P.defaultFileFlags { P.exclusive = True }
 
--- | @'blockFile' store digest'@ is the file name in which the block with
+-- | @'blockPath' store digest'@ is the file name in which the block with
 -- sha256 hash @digest@ should be saved within the given store.
-blockFile :: Store -> Hash -> FilePath
-blockFile (Store storePath) (Hash digest) =
+blockPath :: Store -> Hash -> FilePath
+blockPath (Store storePath) (Hash digest) =
     let hashname@(c1:c2:_) = B8.unpack $ Base16.encode digest
     in storePath ++ "/sha256/" ++ [c1,c2] ++ "/" ++ hashname
 
@@ -89,12 +89,12 @@ blockFile (Store storePath) (Hash digest) =
 -- is already present, this is a no-op.
 saveBlock :: Store -> HashedBlock -> IO ()
 saveBlock store (HashedBlock digest bytes) =
-    saveFile (blockFile store digest) bytes
+    saveFile (blockPath store digest) bytes
 
 -- @'loadBlock@ store digest@ returns the block corresponding to the
 -- given sha256 hash from @store@.
 loadBlock :: Store -> Hash -> IO B.ByteString
-loadBlock store digest = B.readFile (blockFile store digest)
+loadBlock store digest = B.readFile (blockPath store digest)
 
 -- | Read bytestrings from the handle in chunks of size 'blockSize'.
 --
