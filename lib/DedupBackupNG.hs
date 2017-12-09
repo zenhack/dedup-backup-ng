@@ -228,10 +228,12 @@ extractFile store ref path = runConduitRes $
     loadBlob store ref .| sinkFileBS path
 
 -- | @'initStore' dir@ creates the directory structure necessary for
--- storage in the directory @dir@.
-initStore :: FilePath -> IO ()
-initStore dir = forM_ [0,1..0xff] $ \n -> do
-    createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
+-- storage in the directory @dir@. It returns a refernce to the Store.
+initStore :: FilePath -> IO Store
+initStore dir = do
+    forM_ [0,1..0xff] $ \n -> do
+        createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
+    return $ Store dir
 
 -- | Placeholder for main, while we're still experimenting.
 main :: IO ()
