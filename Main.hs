@@ -54,19 +54,19 @@ hash block = HashedBlock (Hash (SHA256.hash block)) block
 -- not already exist. If it does exist, this is a no-op.
 saveFile :: FilePath -> B.ByteString -> IO ()
 saveFile filename bytes =
-    let createExclusive = P.fdToHandle =<< P.openFd
-            filename
-            P.WriteOnly
-            (Just 0o600)
-            P.defaultFileFlags { P.exclusive = True }
-    in
-        bracket
-            createExclusive
-            hClose
-            (\h -> B.hPut h bytes)
-        -- TODO: Vefify that this is an "already exists" error before
-        -- just supressing it.
-        `catch` (\e -> print (e :: IOError))
+    bracket
+        createExclusive
+        hClose
+        (\h -> B.hPut h bytes)
+    -- TODO: Vefify that this is an "already exists" error before
+    -- just supressing it.
+    `catch` (\e -> print (e :: IOError))
+  where
+    createExclusive = P.fdToHandle =<< P.openFd
+        filename
+        P.WriteOnly
+        (Just 0o600)
+        P.defaultFileFlags { P.exclusive = True }
 
 -- | @'blockFile' storePath digest'@ is the file name in which the block with
 -- sha256 hash @digest@ should be stored, given that @storePath@ is the top-level
