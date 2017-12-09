@@ -124,6 +124,7 @@ saveBlob store h = runConduit $
 --
 -- * describe the scheme in more detail
 -- * find a way to report the hash of the tree's root.
+-- * I suspect this doesn't work with trees of depth > 2.
 buildNodes :: Monad m => ConduitM HashedBlock HashedBlock m ()
 buildNodes = go 0 mempty where
     go :: Monad m => Int -> Builder.Builder -> ConduitM HashedBlock HashedBlock m ()
