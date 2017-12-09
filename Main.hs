@@ -35,7 +35,6 @@ import qualified Data.ByteString        as B
 import qualified Data.ByteString.Base16 as Base16
 import qualified Data.ByteString.Char8  as B8
 import qualified System.Posix.IO        as P
-import qualified System.Posix.Types     as P
 
 -- | Wrapper around sha256 digests; just introduces a bit of type safety.
 newtype Hash = Hash B.ByteString
