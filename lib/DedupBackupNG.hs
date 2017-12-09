@@ -208,6 +208,14 @@ buildNodes = go 0 mempty where
             item <- await
             case item of
                 Just block@(HashedBlock (Hash digest) _) -> do
+                    -- FIXME: we can't yield the blocks here; this is what's
+                    -- breaking things when the depth > 2. Doing this causes the
+                    -- blocks to be read by higher levels in the stack, which is
+                    -- not what we want. We should just change things to save the
+                    -- blocks before passing them to us, not after.
+                    --
+                    -- I'm holding off on this until I force myself to write some
+                    -- tests.
                     yield block
                     go (bufSize + hashSize) (buf <> Builder.byteString digest)
                 Nothing ->
