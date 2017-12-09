@@ -43,5 +43,11 @@ test-suite tests
   build-depends:
       base
     , ddb-ng-lib
+    , test-framework
+    , test-framework-quickcheck2
+    , QuickCheck
+    , quickcheck-instances
+    , Unixutils
+    , bytestring
   hs-source-dirs: tests
   default-language: Haskell2010
