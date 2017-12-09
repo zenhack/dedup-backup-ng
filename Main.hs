@@ -23,11 +23,12 @@ module Main where
 import qualified Crypto.Hash.SHA256 as SHA256
 
 import Conduit             (Source, mapC, mapM_C, runConduit, yield, (.|))
-import Control.Exception   (bracket, catch)
-import Control.Monad       (forM_, when)
+import Control.Exception   (bracket, catch, throwIO)
+import Control.Monad       (forM_, unless, when)
 import Control.Monad.Trans (lift)
 import System.Directory    (createDirectoryIfMissing)
 import System.IO           (Handle, IOMode(ReadMode), hClose, openBinaryFile)
+import System.IO.Error     (isAlreadyExistsError)
 import Text.Printf         (printf)
 
 import qualified Data.ByteString        as B
@@ -58,9 +59,8 @@ saveFile filename bytes =
         createExclusive
         hClose
         (\h -> B.hPut h bytes)
-    -- TODO: Vefify that this is an "already exists" error before
-    -- just supressing it.
-    `catch` (\e -> print (e :: IOError))
+    `catch`
+        (\e -> unless (isAlreadyExistsError e) $ throwIO e)
   where
     createExclusive = P.fdToHandle =<< P.openFd
         filename
