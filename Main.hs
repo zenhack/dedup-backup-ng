@@ -78,10 +78,10 @@ blockFile (Store storePath) (Hash digest) =
     let hashname@(c1:c2:_) = B8.unpack $ Base16.encode digest
     in storePath ++ "/sha256/" ++ [c1,c2] ++ "/" ++ hashname
 
--- | @'emit' store block@ Saves @block@ to the store. If the block
+-- | @'saveBlock' store block@ Saves @block@ to the store. If the block
 -- is already present, this is a no-op.
-emit :: Store -> HashedBlock -> IO ()
-emit store (HashedBlock digest bytes) =
+saveBlock :: Store -> HashedBlock -> IO ()
+saveBlock store (HashedBlock digest bytes) =
     saveFile (blockFile store digest) bytes
 
 -- @'loadBlock@ store digest@ returns the block corresponding to the
@@ -109,7 +109,7 @@ doIt filename = bracket
     $ \h -> runConduit $
         hBlocks h .|
         mapC hash .|
-        mapM_C (emit (Store "/tmp/bar"))
+        mapM_C (saveBlock (Store "/tmp/bar"))
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@.
