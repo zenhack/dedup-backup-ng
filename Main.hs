@@ -1,4 +1,4 @@
--- Beginnings of a next-gen version of https://github.com/zenhack/dedup-backup.
+-- | Beginnings of a next-gen version of https://github.com/zenhack/dedup-backup.
 --
 -- The big difference is that this tool does (will do) de-duplication at the
 -- block level, to better handle large files with frequent small changes.
@@ -10,6 +10,14 @@
 --
 -- We don't have a working version of the tool yet, but bits of the code below
 -- do what we need.
+--
+-- Terminology:
+--
+-- * The @store@ is a directory under which the backup system's data is stored.
+-- * A @block@ is a physically contiguous chunk of bytes to be stored in
+--   one-piece.
+-- * A @blob@ is a logically contiguous sequence of bytes (e.g. the contents of
+--   a file), which may be stored in one or more blocks.
 module Main where
 
 import qualified Crypto.Hash.SHA256 as SHA256
@@ -35,7 +43,7 @@ newtype Hash = Hash B.ByteString
 -- | A block together with its hash.
 data HashedBlock = HashedBlock !Hash !B.ByteString
 
--- | The maximum blob size to store.
+-- | The maximum block size to store.
 blockSize = 4096
 
 -- | Compute the hash of a block.
@@ -60,24 +68,24 @@ saveFile filename bytes =
         -- just supressing it.
         `catch` (\e -> print (e :: IOError))
 
--- | @'blobFile' blobDir digest'@ is the file name in which the block with
--- sha256 hash @digest@ should be stored, given that @blobDir@ is the top-level
--- blob directory.
-blobFile :: FilePath -> Hash -> FilePath
-blobFile blobDir (Hash digest) =
+-- | @'blockFile' storePath digest'@ is the file name in which the block with
+-- sha256 hash @digest@ should be stored, given that @storePath@ is the top-level
+-- path to the store.
+blockFile :: FilePath -> Hash -> FilePath
+blockFile storePath (Hash digest) =
     let hashname@(c1:c2:_) = B8.unpack $ Base16.encode digest
-    in blobDir ++ "/sha256/" ++ [c1,c2] ++ "/" ++ hashname
+    in storePath ++ "/sha256/" ++ [c1,c2] ++ "/" ++ hashname
 
--- | @'emit' blobDir blob@ Saves @blob@ to the blob directory, If the blob
+-- | @'emit' storePath block@ Saves @block@ to the store, If the block
 -- is already present, this is a no-op.
 emit :: FilePath -> HashedBlock -> IO ()
-emit blobDir (HashedBlock digest bytes) =
-    saveFile (blobFile blobDir digest) bytes
+emit storePath (HashedBlock digest bytes) =
+    saveFile (blockFile storePath digest) bytes
 
--- @'loadBlob@ blobDir digest@ returns the blob corresponding to the
--- given sha256 hash, from the blob directory @blobDir@.
-loadBlob :: FilePath -> Hash -> IO B.ByteString
-loadBlob blobDir digest = B.readFile (blobFile blobDir digest)
+-- @'loadBlock@ storePath digest@ returns the block corresponding to the
+-- given sha256 hash, from the store at @storePath@.
+loadBlock :: FilePath -> Hash -> IO B.ByteString
+loadBlock storePath digest = B.readFile (blockFile storePath digest)
 
 -- | Read bytestrings from the handle in chunks of size 'blockSize'.
 --
@@ -91,7 +99,7 @@ hBlocks handle = do
         hBlocks handle
 
 -- | Placeholder during experimentation. This stores each of the blocks of
--- the named file in the blob dir at /tmp/bar.
+-- the named file in the store at /tmp/bar.
 doIt :: FilePath -> IO ()
 doIt filename = bracket
     (openBinaryFile filename ReadMode)
@@ -101,10 +109,10 @@ doIt filename = bracket
         mapC hash .|
         mapM_C (emit "/tmp/bar")
 
--- | @'initBlobDir' dir@ creates the directory structure necessary for blob
+-- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@.
-initBlobDir :: FilePath -> IO ()
-initBlobDir dir = forM_ [0,1..0xff] $ \n -> do
+initStore :: FilePath -> IO ()
+initStore dir = forM_ [0,1..0xff] $ \n -> do
     createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
 
 -- | Placeholder for main, while we're still experimenting.
