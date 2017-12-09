@@ -22,19 +22,23 @@ module Main where
 
 import qualified Crypto.Hash.SHA256 as SHA256
 
-import Conduit             (Source, mapC, mapM_C, runConduit, yield, (.|))
+import Conduit
+    (ConduitM, Source, await, mapC, mapM_C, runConduit, yield, (.|))
 import Control.Exception   (bracket, catch, throwIO)
 import Control.Monad       (forM_, unless, when)
 import Control.Monad.Trans (lift)
+import Data.Monoid         ((<>))
 import System.Directory    (createDirectoryIfMissing)
 import System.IO           (Handle, IOMode(ReadMode), hClose, openBinaryFile)
 import System.IO.Error     (isAlreadyExistsError)
 import Text.Printf         (printf)
 
-import qualified Data.ByteString        as B
-import qualified Data.ByteString.Base16 as Base16
-import qualified Data.ByteString.Char8  as B8
-import qualified System.Posix.IO        as P
+import qualified Data.ByteString         as B
+import qualified Data.ByteString.Base16  as Base16
+import qualified Data.ByteString.Builder as Builder
+import qualified Data.ByteString.Char8   as B8
+import qualified Data.ByteString.Lazy    as LBS
+import qualified System.Posix.IO         as P
 
 -- | Wrapper around sha256 digests; just introduces a bit of type safety.
 newtype Hash = Hash B.ByteString
@@ -49,6 +53,9 @@ data HashedBlock = HashedBlock !Hash !B.ByteString
 
 -- | The maximum block size to store.
 blockSize = 4096
+
+-- | The size of a hash in bytes.
+hashSize = 256 `div` 8
 
 -- | Compute the hash of a block.
 hash :: B.ByteString -> HashedBlock
@@ -106,7 +113,34 @@ saveBlob :: Store -> Handle -> IO ()
 saveBlob store h = runConduit $
     hBlocks h .|
     mapC hash .|
+    buildNodes .|
     mapM_C (saveBlock store)
+
+-- | Build the interior nodes of our B-tree. The input stream should be the
+-- leaf blocks of a blob, the output stream will be all of the blocks needed to
+-- be stored.
+--
+-- TODO:
+--
+-- * describe the scheme in more detail
+-- * find a way to report the hash of the tree's root.
+buildNodes :: Monad m => ConduitM HashedBlock HashedBlock m ()
+buildNodes = go 0 mempty where
+    go :: Monad m => Int -> Builder.Builder -> ConduitM HashedBlock HashedBlock m ()
+    go n hashes
+        | (n + hashSize) > blockSize = do
+            yield $ buildHashes hashes
+            go 0 mempty
+        | otherwise = do
+            item <- await
+            case item of
+                Just block@(HashedBlock (Hash digest) bytes) -> do
+                    yield block
+                    go (n + hashSize) (hashes <> Builder.byteString digest)
+                Nothing ->
+                    when (n > 1) $
+                        yield $ buildHashes hashes
+    buildHashes = hash . LBS.toStrict . Builder.toLazyByteString
 
 -- | Placeholder during experimentation. This stores each of the blocks of
 -- the named file in the store at /tmp/bar.
