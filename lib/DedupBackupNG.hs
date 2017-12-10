@@ -95,7 +95,7 @@ saveFile filename bytes =
         (Just 0o600)
         P.defaultFileFlags { P.exclusive = True }
 
--- | @'blockPath' store digest'@ is the file name in which the block with
+-- | @'blockPath' store digest@ is the file name in which the block with
 -- sha256 hash @digest@ should be saved within the given store.
 blockPath :: Store -> Hash -> FilePath
 blockPath (Store storePath) (Hash digest) =
