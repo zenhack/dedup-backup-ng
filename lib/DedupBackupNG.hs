@@ -25,7 +25,8 @@
 --
 -- The blocks do not store any other metadata; reading back a blob requires
 -- knowing the hash of the root block of its tree, and the depth of the tree.
-{-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE DoAndIfThenElse #-}
+{-# LANGUAGE Rank2Types      #-}
 module DedupBackupNG where
 
 import qualified Crypto.Hash.SHA256 as SHA256
@@ -214,12 +215,15 @@ buildNodes = go 0 mempty where
 
 storeFile :: Store -> FilePath -> IO BlobRef
 storeFile store filename = do
-    status <- P.getFileStatus filename
-    let P.COff size = P.fileSize status
-    bracket
-        (openBinaryFile filename ReadMode)
-        hClose
-        (\h -> saveBlob store size h)
+    status <- P.getSymbolicLinkStatus filename
+    if P.isRegularFile status then do
+        let P.COff size = P.fileSize status
+        bracket
+            (openBinaryFile filename ReadMode)
+            hClose
+            (\h -> saveBlob store size h)
+    else
+        throwIO $ userError "Expected regular file"
 
 extractFile :: Store -> BlobRef -> FilePath -> IO ()
 extractFile store ref path = runConduitRes $
