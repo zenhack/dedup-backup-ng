@@ -25,6 +25,7 @@
 --
 -- The blocks do not store any other metadata; reading back a blob requires
 -- knowing the hash of the root block of its tree, and the depth of the tree.
+{-# LANGUAGE DeriveGeneric   #-}
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE Rank2Types      #-}
 module DedupBackupNG where
@@ -32,11 +33,14 @@ module DedupBackupNG where
 import qualified Crypto.Hash.SHA256 as SHA256
 
 import Conduit
+
+import Codec.Serialise        (Serialise)
 import Control.Exception      (bracket, catch, throwIO)
 import Control.Monad          (forM_, unless, when)
 import Control.Monad.IO.Class (MonadIO(liftIO))
 import Data.Int               (Int64)
 import Data.Monoid            ((<>))
+import GHC.Generics           (Generic)
 import System.Directory       (createDirectoryIfMissing)
 import System.IO              (Handle, IOMode(ReadMode), hClose, openBinaryFile)
 import System.IO.Error        (isAlreadyExistsError)
@@ -53,7 +57,9 @@ import qualified System.Posix.Types      as P
 
 -- | Wrapper around sha256 digests; just introduces a bit of type safety.
 newtype Hash = Hash B.ByteString
-    deriving(Show, Eq)
+    deriving(Show, Eq, Generic)
+
+instance Serialise Hash
 
 -- | Info about a storage location.
 newtype Store = Store FilePath
@@ -62,7 +68,9 @@ newtype Store = Store FilePath
 -- | A reference to a blob. This includes all information necessary to read the
 -- blob, not counting the location of the store.
 data BlobRef = BlobRef !Int64 !Hash
-    deriving(Show, Eq)
+    deriving(Show, Eq, Generic)
+
+instance Serialise BlobRef
 
 -- | A block together with its hash.
 data HashedBlock = HashedBlock !Hash !B.ByteString
@@ -72,7 +80,9 @@ data FileRef
     = RegFile !BlobRef
     | SymLink !B8.ByteString -- target of the link.
     | Dir !BlobRef
-    deriving(Show, Eq)
+    deriving(Show, Eq, Generic)
+
+instance Serialise FileRef
 
 -- | A directory entry. The 'Dir' variant of 'FileRef' points to a blob whose
 -- contents are a sequence of these. TODO: define wire format (probably CBOR
@@ -81,7 +91,9 @@ data DirEnt = DirEnt
     { entName :: !B8.ByteString -- file name
     , entRef  :: !FileRef
     -- TODO: file metadata (ownership, timestamps, perms, etc).
-    }
+    } deriving(Show, Eq, Generic)
+
+instance Serialise DirEnt
 
 -- | The maximum block size to store.
 blockSize :: Integral a => a

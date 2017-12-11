@@ -26,6 +26,7 @@ library ddb-ng-lib
     , bytestring >=0.10 && <0.11
     , base16-bytestring >=0.1 && <0.2
     , unix >=2.7 && <2.8
+    , serialise >= 0.2 && <0.3
   hs-source-dirs:      lib
   ghc-options:
     -Wall
