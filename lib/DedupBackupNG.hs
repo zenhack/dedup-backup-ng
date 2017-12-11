@@ -53,9 +53,12 @@ import qualified Data.ByteString.Char8   as B8
 import qualified Data.ByteString.Lazy    as LBS
 import qualified System.Posix.Files      as P
 import qualified System.Posix.IO         as P
-import qualified System.Posix.Types      as P
 
--- | Wrapper around sha256 digests; just introduces a bit of type safety.
+-- | newtype wrapper around a disk/storage block.
+newtype Block = Block B.ByteString
+    deriving(Show, Eq, Generic)
+
+-- | Wrapper around sha256 digests.
 newtype Hash = Hash B.ByteString
     deriving(Show, Eq, Generic)
 
@@ -73,7 +76,14 @@ data BlobRef = BlobRef !Int64 !Hash
 instance Serialise BlobRef
 
 -- | A block together with its hash.
-data HashedBlock = HashedBlock !Hash !B.ByteString
+data HashedBlock = HashedBlock
+    { blockDigest :: !Hash
+    , blockBytes  :: !Block
+    }
+
+-- | A HashedBlock for the zero-length block.
+zeroBlock :: HashedBlock
+zeroBlock = hash (Block B.empty)
 
 -- | A reference to a file in the store.
 data FileRef
@@ -104,8 +114,8 @@ hashSize :: Integral a => a
 hashSize = 256 `div` 8
 
 -- | Compute the hash of a block.
-hash :: B.ByteString -> HashedBlock
-hash block = HashedBlock (Hash (SHA256.hash block)) block
+hash :: Block -> HashedBlock
+hash block@(Block bytes) = HashedBlock (Hash (SHA256.hash bytes)) block
 
 -- | Save the provided ByteString to the named file, if the file does
 -- not already exist. If it does exist, this is a no-op.
@@ -134,64 +144,50 @@ blockPath (Store storePath) (Hash digest) =
 -- | @'saveBlock' store block@ Saves @block@ to the store. If the block
 -- is already present, this is a no-op.
 saveBlock :: MonadIO m => Store -> HashedBlock -> m ()
-saveBlock store (HashedBlock digest bytes) =
+saveBlock store (HashedBlock digest (Block bytes)) =
     liftIO $ saveFile (blockPath store digest) bytes
 
 -- @'loadBlock@ store digest@ returns the block corresponding to the
 -- given sha256 hash from @store@.
-loadBlock :: Store -> Hash -> IO B.ByteString
-loadBlock store digest = B.readFile (blockPath store digest)
+loadBlock :: Store -> Hash -> IO Block
+loadBlock store digest = Block <$> B.readFile (blockPath store digest)
 
 -- | Read bytestrings from the handle in chunks of size 'blockSize'.
 --
 -- TODO: there's probably a library function that does this; we should
 -- look for for that and use it instead.
-hBlocks :: MonadIO m => Handle -> Source m B.ByteString
+hBlocks :: MonadIO m => Handle -> Source m Block
 hBlocks handle = do
-    block <- liftIO $ B.hGet handle blockSize
-    when (block /= B.empty) $ do
-        yield block
+    bytes <- liftIO $ B.hGet handle blockSize
+    when (bytes /= B.empty) $ do
+        yield (Block bytes)
         hBlocks handle
 
--- | @'saveBlob' store size handle@ saves all blocks read from the handle
--- to the store, expecting @size@ bytes total. 'saveBlob' will not read
--- more blocks than indicated by @size@ (though it may read past the exact
--- byte index, if there are more bytes available in the same block).
+-- | @'saveBlob' store handle@ saves all blocks read from the handle
+-- to the store.
 --
 -- Returns a BlobRef referencing the blob.
---
--- TODO: somehow issue a warning if the blob size is shorter than the
--- available bytes.
-saveBlob :: Store -> Int64 -> Handle -> IO BlobRef
-saveBlob store size h = do
-    let treeDepth = depthForSize size
-        numBlocks = blocksForSize size
-    Just (HashedBlock digest _) <- runConduit $
-        hBlocks h .|
-        takeC numBlocks .|
-        mapC hash .|
-        buildTree store treeDepth .|
-        lastC
-    return $ BlobRef treeDepth digest
+saveBlob :: Store -> Handle -> IO BlobRef
+saveBlob store h = runConduit $ hBlocks h .| buildTree store
 
 -- Load a blob from disk.
 loadBlob :: MonadIO m => Store -> BlobRef -> Producer m B.ByteString
-loadBlob store (BlobRef 1 digest) =
-    liftIO (loadBlock store digest) >>= yield
+loadBlob store (BlobRef 1 digest) = do
+    Block bytes <- liftIO (loadBlock store digest)
+    yield bytes
 loadBlob store (BlobRef n digest) = do
-    block <- liftIO $ loadBlock store digest
-    forM_ (chunk block) $ \digest' -> do
+    Block bytes <- liftIO $ loadBlock store digest
+    forM_ (chunk bytes) $ \digest' -> do
         loadBlob store (BlobRef (n-1) (Hash digest'))
   where
     chunk bs
         | bs == B.empty = []
         | otherwise = B.take hashSize bs : chunk (B.drop hashSize bs)
 
--- | Normalize the size of ByteStrings, packing as many into chuncks of at most
--- 'blockSize' as possible. Note that this will not split values, only coalesce
--- them.
-fixBlockSizes :: Monad m => ConduitM B.ByteString B.ByteString m ()
-fixBlockSizes = go 0 mempty where
+-- | Pack incoming ByteStrings into as few blocks as possible.
+-- Note that this will not split values, only coalesce them.
+collectBlocks :: Monad m => ConduitM B.ByteString Block m ()
+collectBlocks = go 0 mempty where
     go bufSize buf = do
         chunk <- await
         case chunk of
@@ -204,38 +200,30 @@ fixBlockSizes = go 0 mempty where
                     else do
                         yieldBlock buf
                         go (B.length bytes) (Builder.byteString bytes)
-    yieldBlock = yield . LBS.toStrict . Builder.toLazyByteString
+    yieldBlock = yield . Block . LBS.toStrict . Builder.toLazyByteString
 
 -- | Save all blocks in the stream to the store, and pass them along.
 saveBlocks :: MonadIO m => Store -> ConduitM HashedBlock HashedBlock m ()
 saveBlocks store = iterMC (saveBlock store)
 
--- | @'depthForSize' n@ computes the depth of a tree for a blob of size @n@.
-depthForSize :: Int64 -> Int64
-depthForSize 0 = 0
-depthForSize n
-    | n <= blockSize = 1
-    | otherwise = 1 + depthForSize (n `div` branchFactor)
+-- | 'buildTree' builds the tree for a blob consisting of the incoming (leaf)
+-- blocks. Returns a BlobRef to the root of the tree.
+buildTree :: MonadIO m => Store -> Consumer Block m BlobRef
+buildTree store = mapC hash .| saveBlocks store .| go 1
   where
-    branchFactor = blockSize `div` hashSize
-
-blocksForSize :: Int64 -> Int
-blocksForSize size = fromIntegral $
-    let wholeBlocks = size `div` blockSize
-        haveRemainder = size `mod` blockSize /= 0
-    in if haveRemainder
-        then wholeBlocks + 1
-        else wholeBlocks
-
--- | @'buildTree' size@ builds the tree for a blob of size @size@ bytes. It
--- expects the raw (leaf) blocks of the blob to be its input, and yields the tree
--- in post-order (i.e. each interior node is yielded after its children).
-buildTree :: MonadIO m => Store -> Int64 -> ConduitM HashedBlock HashedBlock m ()
--- We should only hit the first case if the blob is empty; otherwise we won't
--- recurse down that far.
-buildTree store 0 = yield (hash $ B8.pack "") .| saveBlocks store
-buildTree store 1 = saveBlocks store
-buildTree store n = saveBlocks store .| buildNodes .| buildTree store (n-1)
+    go n = do
+        item1 <- await
+        item2 <- await
+        case (item1, item2) of
+            (Just block, Nothing) ->
+                return $ BlobRef n (blockDigest block)
+            (Nothing, _) ->
+                return $ BlobRef n (blockDigest zeroBlock)
+            (Just block1, Just block2) -> do
+                (yieldMany [block1, block2] >> mapC id)
+                .| buildNodes
+                .| saveBlocks store
+                .| go (n+1)
 
 -- | Build interior nodes from the incoming stream. The hashes of the incoming
 -- blocks are accumulated into interior nodes, and the blocks for the interior
@@ -245,18 +233,17 @@ buildTree store n = saveBlocks store .| buildNodes .| buildTree store (n-1)
 buildNodes :: Monad m => ConduitM HashedBlock HashedBlock m ()
 buildNodes
     = mapC (\(HashedBlock (Hash digest) _) -> digest)
-    .| fixBlockSizes
+    .| collectBlocks
     .| mapC hash
 
 storeFile :: Store -> FilePath -> IO FileRef
 storeFile store filename = do
     status <- P.getSymbolicLinkStatus filename
-    if P.isRegularFile status then do
-        let P.COff size = P.fileSize status
+    if P.isRegularFile status then
         bracket
             (openBinaryFile filename ReadMode)
             hClose
-            (\h -> RegFile <$> saveBlob store size h)
+            (\h -> RegFile <$> saveBlob store h)
     else if P.isSymbolicLink status then do
         target <- P.readSymbolicLink filename
         return (SymLink $ B8.pack target)
@@ -273,7 +260,9 @@ initStore :: FilePath -> IO Store
 initStore dir = do
     forM_ [0,1..0xff] $ \n -> do
         createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
-    return $ Store dir
+    let store = Store dir
+    saveBlock store zeroBlock
+    return store
 
 -- | Placeholder for main, while we're still experimenting.
 main :: IO ()
