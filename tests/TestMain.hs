@@ -26,7 +26,7 @@ prop_saveRestoreBlob = monadicIO $ do
             newPath = path ++ "/new"
         B.writeFile oldPath blob
         store <- initStore (path ++ "/store")
-        ref <- storeFile store oldPath
+        RegFile ref <- storeFile store oldPath
         extractFile store ref newPath
         old <- B.readFile oldPath
         new <- B.readFile newPath

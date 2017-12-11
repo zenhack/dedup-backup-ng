@@ -67,6 +67,9 @@ data BlobRef = BlobRef !Int64 !Hash
 -- | A block together with its hash.
 data HashedBlock = HashedBlock !Hash !B.ByteString
 
+-- | A reference to a file in the store.
+data FileRef = RegFile !BlobRef
+
 -- | The maximum block size to store.
 blockSize :: Integral a => a
 blockSize = 4096
@@ -213,7 +216,7 @@ buildNodes = go 0 mempty where
                     yield $ buildHashes buf
     buildHashes = hash . LBS.toStrict . Builder.toLazyByteString
 
-storeFile :: Store -> FilePath -> IO BlobRef
+storeFile :: Store -> FilePath -> IO FileRef
 storeFile store filename = do
     status <- P.getSymbolicLinkStatus filename
     if P.isRegularFile status then do
@@ -221,7 +224,7 @@ storeFile store filename = do
         bracket
             (openBinaryFile filename ReadMode)
             hClose
-            (\h -> saveBlob store size h)
+            (\h -> RegFile <$> saveBlob store size h)
     else
         throwIO $ userError "Expected regular file"
 
