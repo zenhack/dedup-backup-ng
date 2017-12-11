@@ -187,6 +187,25 @@ loadBlob store (BlobRef n digest) = do
         | bs == B.empty = []
         | otherwise = B.take hashSize bs : chunk (B.drop hashSize bs)
 
+-- | Normalize the size of ByteStrings, packing as many into chuncks of at most
+-- 'blockSize' as possible. Note that this will not split values, only coalesce
+-- them.
+fixBlockSizes :: Monad m => ConduitM B.ByteString B.ByteString m ()
+fixBlockSizes = go 0 mempty where
+    go bufSize buf = do
+        chunk <- await
+        case chunk of
+            Nothing -> yieldBlock buf
+            Just bytes ->
+                let newSize = B.length bytes + bufSize
+                in if newSize <= blockSize
+                    then
+                        go newSize (buf <> Builder.byteString bytes)
+                    else do
+                        yieldBlock buf
+                        go (B.length bytes) (Builder.byteString bytes)
+    yieldBlock = yield . LBS.toStrict . Builder.toLazyByteString
+
 -- | Save all blocks in the stream to the store, and pass them along.
 saveBlocks :: MonadIO m => Store -> ConduitM HashedBlock HashedBlock m ()
 saveBlocks store = iterMC (saveBlock store)
@@ -218,28 +237,16 @@ buildTree store 0 = yield (hash $ B8.pack "") .| saveBlocks store
 buildTree store 1 = saveBlocks store
 buildTree store n = saveBlocks store .| buildNodes .| buildTree store (n-1)
 
-
--- | Build interior nodes from the incoming stream. The incoming blocks are
--- copied to the output, and interior nodes are injected after their contents.
+-- | Build interior nodes from the incoming stream. The hashes of the incoming
+-- blocks are accumulated into interior nodes, and the blocks for the interior
+-- nodes are emitted.
 --
 -- Note that this only generates one layer of nodes; see 'buildTree'.
 buildNodes :: Monad m => ConduitM HashedBlock HashedBlock m ()
-buildNodes = go 0 mempty where
-    go :: Monad m => Int64 -> Builder.Builder -> ConduitM HashedBlock HashedBlock m ()
-    go bufSize buf
-        | (bufSize + hashSize) > blockSize = do
-            -- adding another hash would overflow the block; yield what we've
-            -- got and start the next block.
-            yield $ buildHashes buf
-            go 0 mempty
-        | otherwise = do
-            item <- await
-            case item of
-                Just (HashedBlock (Hash digest) _) -> do
-                    go (bufSize + hashSize) (buf <> Builder.byteString digest)
-                Nothing ->
-                    yield $ buildHashes buf
-    buildHashes = hash . LBS.toStrict . Builder.toLazyByteString
+buildNodes
+    = mapC (\(HashedBlock (Hash digest) _) -> digest)
+    .| fixBlockSizes
+    .| mapC hash
 
 storeFile :: Store -> FilePath -> IO FileRef
 storeFile store filename = do
