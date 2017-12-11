@@ -70,8 +70,18 @@ data HashedBlock = HashedBlock !Hash !B.ByteString
 -- | A reference to a file in the store.
 data FileRef
     = RegFile !BlobRef
-    | SymLink !B8.ByteString
+    | SymLink !B8.ByteString -- target of the link.
+    | Dir !BlobRef
     deriving(Show, Eq)
+
+-- | A directory entry. The 'Dir' variant of 'FileRef' points to a blob whose
+-- contents are a sequence of these. TODO: define wire format (probably CBOR
+-- using binary-serialise-cbor).
+data DirEnt = DirEnt
+    { entName :: !B8.ByteString -- file name
+    , entRef  :: !FileRef
+    -- TODO: file metadata (ownership, timestamps, perms, etc).
+    }
 
 -- | The maximum block size to store.
 blockSize :: Integral a => a
