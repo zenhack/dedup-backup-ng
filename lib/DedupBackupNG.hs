@@ -34,7 +34,7 @@ import qualified Crypto.Hash.SHA256 as SHA256
 
 import Conduit
 
-import Codec.Serialise        (Serialise)
+import Codec.Serialise        (Serialise, serialise)
 import Control.Exception      (bracket, catch, throwIO)
 import Control.Monad          (forM_, unless, when)
 import Control.Monad.IO.Class (MonadIO(liftIO))
@@ -42,6 +42,7 @@ import Data.Int               (Int64)
 import Data.Monoid            ((<>))
 import GHC.Generics           (Generic)
 import System.Directory       (createDirectoryIfMissing)
+import System.FilePath.Posix  (takeFileName)
 import System.IO              (Handle, IOMode(ReadMode), hClose, openBinaryFile)
 import System.IO.Error        (isAlreadyExistsError)
 import Text.Printf            (printf)
@@ -247,6 +248,20 @@ storeFile store filename = do
     else if P.isSymbolicLink status then do
         target <- P.readSymbolicLink filename
         return (SymLink $ B8.pack target)
+    else if P.isDirectory status then do
+        blobRef <- runConduitRes $
+            sourceDirectory filename
+            .| filterC (\name -> not $ name `elem` [".", ".."])
+            .| mapMC (\name -> do
+                fileRef <- liftIO $ storeFile store name
+                return $ DirEnt
+                    { entName = B8.pack $ takeFileName name
+                    , entRef = fileRef
+                    })
+            .| mapC (LBS.toStrict . serialise)
+            .| collectBlocks
+            .| buildTree store
+        return $ Dir blobRef
     else
         throwIO $ userError "Unsupported file type."
 
