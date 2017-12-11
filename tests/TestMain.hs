@@ -18,6 +18,7 @@ genBlob = do
     numBytes <- choose (0 :: Int, 4 * 1024 * 1024)
     B.pack <$> replicateM numBytes arbitrary
 
+prop_saveRestoreBlob :: Property
 prop_saveRestoreBlob = monadicIO $ do
     blob <- pick genBlob
     -- run $ print (LB.length blob)

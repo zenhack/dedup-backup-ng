@@ -210,7 +210,7 @@ buildNodes = go 0 mempty where
         | otherwise = do
             item <- await
             case item of
-                Just block@(HashedBlock (Hash digest) _) -> do
+                Just (HashedBlock (Hash digest) _) -> do
                     go (bufSize + hashSize) (buf <> Builder.byteString digest)
                 Nothing ->
                     yield $ buildHashes buf
