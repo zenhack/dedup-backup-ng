@@ -68,7 +68,10 @@ data BlobRef = BlobRef !Int64 !Hash
 data HashedBlock = HashedBlock !Hash !B.ByteString
 
 -- | A reference to a file in the store.
-data FileRef = RegFile !BlobRef
+data FileRef
+    = RegFile !BlobRef
+    | SymLink !B8.ByteString
+    deriving(Show, Eq)
 
 -- | The maximum block size to store.
 blockSize :: Integral a => a
@@ -225,8 +228,11 @@ storeFile store filename = do
             (openBinaryFile filename ReadMode)
             hClose
             (\h -> RegFile <$> saveBlob store size h)
+    else if P.isSymbolicLink status then do
+        target <- P.readSymbolicLink filename
+        return (SymLink $ B8.pack target)
     else
-        throwIO $ userError "Expected regular file"
+        throwIO $ userError "Unsupported file type."
 
 extractFile :: Store -> BlobRef -> FilePath -> IO ()
 extractFile store ref path = runConduitRes $
