@@ -141,6 +141,7 @@ class MonadMask m => MonadFileSystem m where
     saveFile :: FilePath -> B.ByteString -> m ()
 
     listDirectory :: FilePath -> m [FilePath]
+    createDirectoryIfMissing :: Bool -> FilePath -> m ()
 
     fsSinkFileBS :: Handle m -> Consumer B.ByteString m ()
     fsRunConduit :: ConduitM () Void m a -> m a
@@ -180,6 +181,7 @@ instance MonadFileSystem IO where
     isDirectory = pure . P.isDirectory
     isSymbolicLink = pure . P.isSymbolicLink
     listDirectory = Dir.listDirectory
+    createDirectoryIfMissing = Dir.createDirectoryIfMissing
     fsRunConduit = runConduit
 
 -- | @'blockPath' store digest@ is the file name in which the block with
@@ -323,10 +325,10 @@ extractFile store ref path = bracket
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@. It returns a refernce to the Store.
-initStore :: FilePath -> IO Store
+initStore :: MonadFileSystem m => FilePath -> m Store
 initStore dir = do
     forM_ [0,1..0xff] $ \n -> do
-        Dir.createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
+        createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
     let store = Store dir
     saveBlock store zeroBlock
     return store
