@@ -4,10 +4,7 @@ module MonadFileSystem where
 
 import Conduit
 
-import Control.Monad       (unless)
-import Control.Monad.Catch (MonadMask, bracket, catch, throwM)
-import Data.Void           (Void)
-import System.IO.Error     (isAlreadyExistsError)
+import Control.Monad.Catch (MonadMask)
 
 import qualified Data.ByteString    as B
 import qualified System.Directory   as Dir
@@ -25,17 +22,17 @@ class MonadMask m => MonadFileSystem m where
     -- 'B.hGet'
     hGetBS :: Handle m -> Int -> m B.ByteString
 
+    -- 'B.hPut'
+    hPutBS :: Handle m -> B.ByteString -> m ()
+
     hClose :: Handle m -> m ()
     openBinaryFile :: FilePath -> IO.IOMode -> m (Handle m)
 
     -- 'B.readFile'
     readFileBS :: FilePath -> m B.ByteString
 
-    -- This is the one function that doesn't map almost directly  to an
-    -- existant library function in IO. Save the provided ByteString to
-    -- the named file, if the file does not already exist. If it does
-    -- exist, this is a no-op.
-    saveFile :: FilePath -> B.ByteString -> m ()
+    -- | Create a file (which must not arlready exist) in exclusive mode.
+    createExclusive :: FilePath -> m (Handle m)
 
     listDirectory :: FilePath -> m [FilePath]
     createDirectoryIfMissing :: Bool -> FilePath -> m ()
@@ -63,6 +60,7 @@ instance MonadFileSystem IO where
     type Handle IO = IO.Handle
     type FileStatus IO = P.FileStatus
     hGetBS = B.hGet
+    hPutBS = B.hPut
     hClose = IO.hClose
     openBinaryFile = IO.openBinaryFile
     readFileBS = B.readFile
@@ -78,15 +76,7 @@ instance MonadFileSystem IO where
 
     fsSinkFileBS h = mapM_C (B.hPut h)
 
-    saveFile filename bytes =
-        bracket
-            createExclusive
-            hClose
-            (\h -> B.hPut h bytes)
-        `catch`
-            (\e -> unless (isAlreadyExistsError e) $ throwM e)
-      where
-        createExclusive = P.fdToHandle =<< P.openFd
+    createExclusive filename = P.fdToHandle =<< P.openFd
             filename
             P.WriteOnly
             (Just 0o600)

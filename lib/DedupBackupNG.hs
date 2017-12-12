@@ -37,13 +37,14 @@ import Conduit
 import MonadFileSystem
 
 import Codec.Serialise       (Serialise, serialise)
-import Control.Monad         (forM_, when)
-import Control.Monad.Catch   (bracket, throwM)
+import Control.Monad         (forM_, unless, when)
+import Control.Monad.Catch   (bracket, catch, throwM)
 import Data.Int              (Int64)
 import Data.Monoid           ((<>))
 import GHC.Generics          (Generic)
 import System.FilePath.Posix (takeFileName)
 import System.IO             (IOMode(..))
+import System.IO.Error       (isAlreadyExistsError)
 import Text.Printf           (printf)
 
 import qualified Data.ByteString         as B
@@ -216,6 +217,17 @@ buildNodes
     = mapC (\(HashedBlock (Hash digest) _) -> digest)
     .| collectBlocks
     .| mapC hash
+
+-- Save the provided ByteString to the named file, if the file does
+-- not already exist. If it does exist, this is a no-op.
+saveFile :: MonadFileSystem m => FilePath -> B.ByteString -> m ()
+saveFile filename bytes =
+    bracket
+        (createExclusive filename)
+        hClose
+        (\h -> hPutBS h bytes)
+    `catch`
+        (\e -> unless (isAlreadyExistsError e) $ throwM e)
 
 storeFile :: MonadFileSystem m => Store -> FilePath -> m FileRef
 storeFile store filename = do
