@@ -28,30 +28,32 @@
 {-# LANGUAGE DeriveGeneric   #-}
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE Rank2Types      #-}
+{-# LANGUAGE TypeFamilies    #-}
 module DedupBackupNG where
 
 import qualified Crypto.Hash.SHA256 as SHA256
 
 import Conduit
 
-import Codec.Serialise        (Serialise, serialise)
-import Control.Exception      (bracket, catch, throwIO)
-import Control.Monad          (forM_, unless, when)
-import Control.Monad.IO.Class (MonadIO(liftIO))
-import Data.Int               (Int64)
-import Data.Monoid            ((<>))
-import GHC.Generics           (Generic)
-import System.Directory       (createDirectoryIfMissing)
-import System.FilePath.Posix  (takeFileName)
-import System.IO              (Handle, IOMode(ReadMode), hClose, openBinaryFile)
-import System.IO.Error        (isAlreadyExistsError)
-import Text.Printf            (printf)
+import Codec.Serialise       (Serialise, serialise)
+import Control.Monad         (forM_, unless, when)
+import Control.Monad.Catch   (MonadMask, bracket, catch, throwM)
+import Data.Int              (Int64)
+import Data.Monoid           ((<>))
+import Data.Void             (Void)
+import GHC.Generics          (Generic)
+import System.FilePath.Posix (takeFileName)
+import System.IO             (IOMode(..))
+import System.IO.Error       (isAlreadyExistsError)
+import Text.Printf           (printf)
 
 import qualified Data.ByteString         as B
 import qualified Data.ByteString.Base16  as Base16
 import qualified Data.ByteString.Builder as Builder
 import qualified Data.ByteString.Char8   as B8
 import qualified Data.ByteString.Lazy    as LBS
+import qualified System.Directory        as Dir
+import qualified System.IO               as IO
 import qualified System.Posix.Files      as P
 import qualified System.Posix.IO         as P
 
@@ -118,22 +120,67 @@ hashSize = 256 `div` 8
 hash :: Block -> HashedBlock
 hash block@(Block bytes) = HashedBlock (Hash (SHA256.hash bytes)) block
 
--- | Save the provided ByteString to the named file, if the file does
--- not already exist. If it does exist, this is a no-op.
-saveFile :: FilePath -> B.ByteString -> IO ()
-saveFile filename bytes =
-    bracket
-        createExclusive
-        hClose
-        (\h -> B.hPut h bytes)
-    `catch`
-        (\e -> unless (isAlreadyExistsError e) $ throwIO e)
-  where
-    createExclusive = P.fdToHandle =<< P.openFd
-        filename
-        P.WriteOnly
-        (Just 0o600)
-        P.defaultFileFlags { P.exclusive = True }
+class MonadMask m => MonadFileSystem m where
+    type Handle m
+    type FileStatus m
+
+    -- Like 'B.hGet'
+    hGetBS :: Handle m -> Int -> m B.ByteString
+
+    -- Like theh corresponding function from 'System.IO'
+    hClose :: Handle m -> m ()
+
+    -- Like 'System.IO.openBinaryFile'
+    openBinaryFile :: FilePath -> IOMode -> m (Handle m)
+
+    -- Like B.readFile
+    readFileBS :: FilePath -> m B.ByteString
+
+    -- | Save the provided ByteString to the named file, if the file does
+    -- not already exist. If it does exist, this is a no-op.
+    saveFile :: FilePath -> B.ByteString -> m ()
+
+    listDirectory :: FilePath -> m [FilePath]
+
+    fsSinkFileBS :: Handle m -> Consumer B.ByteString m ()
+    fsRunConduit :: ConduitM () Void m a -> m a
+
+    getSymbolicLinkStatus :: (FileStatus m ~ status) => FilePath -> m status
+    readSymbolicLink :: FilePath -> m FilePath
+
+    isRegularFile :: FileStatus m -> m Bool
+    isDirectory :: FileStatus m -> m Bool
+    isSymbolicLink :: FileStatus m -> m Bool
+
+instance MonadFileSystem IO where
+    type Handle IO = IO.Handle
+    type FileStatus IO = P.FileStatus
+
+    hGetBS = B.hGet
+    hClose = IO.hClose
+    openBinaryFile = IO.openBinaryFile
+    readFileBS = B.readFile
+    saveFile filename bytes =
+        bracket
+            createExclusive
+            hClose
+            (\h -> B.hPut h bytes)
+        `catch`
+            (\e -> unless (isAlreadyExistsError e) $ throwM e)
+      where
+        createExclusive = P.fdToHandle =<< P.openFd
+            filename
+            P.WriteOnly
+            (Just 0o600)
+            P.defaultFileFlags { P.exclusive = True }
+    fsSinkFileBS h = mapM_C (B.hPut h)
+    getSymbolicLinkStatus = P.getSymbolicLinkStatus
+    readSymbolicLink = P.readSymbolicLink
+    isRegularFile = pure . P.isRegularFile
+    isDirectory = pure . P.isDirectory
+    isSymbolicLink = pure . P.isSymbolicLink
+    listDirectory = Dir.listDirectory
+    fsRunConduit = runConduit
 
 -- | @'blockPath' store digest@ is the file name in which the block with
 -- sha256 hash @digest@ should be saved within the given store.
@@ -144,22 +191,22 @@ blockPath (Store storePath) (Hash digest) =
 
 -- | @'saveBlock' store block@ Saves @block@ to the store. If the block
 -- is already present, this is a no-op.
-saveBlock :: MonadIO m => Store -> HashedBlock -> m ()
+saveBlock :: MonadFileSystem m => Store -> HashedBlock -> m ()
 saveBlock store (HashedBlock digest (Block bytes)) =
-    liftIO $ saveFile (blockPath store digest) bytes
+    saveFile (blockPath store digest) bytes
 
 -- @'loadBlock@ store digest@ returns the block corresponding to the
 -- given sha256 hash from @store@.
-loadBlock :: Store -> Hash -> IO Block
-loadBlock store digest = Block <$> B.readFile (blockPath store digest)
+loadBlock :: MonadFileSystem m => Store -> Hash -> m Block
+loadBlock store digest = Block <$> readFileBS (blockPath store digest)
 
 -- | Read bytestrings from the handle in chunks of size 'blockSize'.
 --
 -- TODO: there's probably a library function that does this; we should
 -- look for for that and use it instead.
-hBlocks :: MonadIO m => Handle -> Source m Block
+hBlocks :: MonadFileSystem m => Handle m -> Source m Block
 hBlocks handle = do
-    bytes <- liftIO $ B.hGet handle blockSize
+    bytes <- lift $ hGetBS handle blockSize
     when (bytes /= B.empty) $ do
         yield (Block bytes)
         hBlocks handle
@@ -168,16 +215,16 @@ hBlocks handle = do
 -- to the store.
 --
 -- Returns a BlobRef referencing the blob.
-saveBlob :: Store -> Handle -> IO BlobRef
-saveBlob store h = runConduit $ hBlocks h .| buildTree store
+saveBlob :: MonadFileSystem m => Store -> Handle m -> m BlobRef
+saveBlob store h = fsRunConduit $ hBlocks h .| buildTree store
 
 -- Load a blob from disk.
-loadBlob :: MonadIO m => Store -> BlobRef -> Producer m B.ByteString
+loadBlob :: MonadFileSystem m => Store -> BlobRef -> Producer m B.ByteString
 loadBlob store (BlobRef 1 digest) = do
-    Block bytes <- liftIO (loadBlock store digest)
+    Block bytes <- lift $ loadBlock store digest
     yield bytes
 loadBlob store (BlobRef n digest) = do
-    Block bytes <- liftIO $ loadBlock store digest
+    Block bytes <- lift $ loadBlock store digest
     forM_ (chunk bytes) $ \digest' -> do
         loadBlob store (BlobRef (n-1) (Hash digest'))
   where
@@ -204,12 +251,12 @@ collectBlocks = go 0 mempty where
     yieldBlock = yield . Block . LBS.toStrict . Builder.toLazyByteString
 
 -- | Save all blocks in the stream to the store, and pass them along.
-saveBlocks :: MonadIO m => Store -> ConduitM HashedBlock HashedBlock m ()
+saveBlocks :: MonadFileSystem m => Store -> ConduitM HashedBlock HashedBlock m ()
 saveBlocks store = iterMC (saveBlock store)
 
 -- | 'buildTree' builds the tree for a blob consisting of the incoming (leaf)
 -- blocks. Returns a BlobRef to the root of the tree.
-buildTree :: MonadIO m => Store -> Consumer Block m BlobRef
+buildTree :: MonadFileSystem m => Store -> Consumer Block m BlobRef
 buildTree store = mapC hash .| saveBlocks store .| go 1
   where
     go n = do
@@ -237,23 +284,26 @@ buildNodes
     .| collectBlocks
     .| mapC hash
 
-storeFile :: Store -> FilePath -> IO FileRef
+storeFile :: MonadFileSystem m => Store -> FilePath -> m FileRef
 storeFile store filename = do
-    status <- P.getSymbolicLinkStatus filename
-    if P.isRegularFile status then
+    status <- getSymbolicLinkStatus filename
+    isFile <- isRegularFile status
+    isDir <- isDirectory status
+    isSymLink <- isSymbolicLink status
+    if isFile then
         bracket
             (openBinaryFile filename ReadMode)
             hClose
             (\h -> RegFile <$> saveBlob store h)
-    else if P.isSymbolicLink status then do
-        target <- P.readSymbolicLink filename
+    else if isSymLink then do
+        target <- readSymbolicLink filename
         return (SymLink $ B8.pack target)
-    else if P.isDirectory status then do
-        blobRef <- runConduitRes $
-            sourceDirectory filename
-            .| filterC (\name -> not $ name `elem` [".", ".."])
+    else if isDir then do
+        files <- listDirectory filename
+        blobRef <- fsRunConduit $
+            yieldMany files
             .| mapMC (\name -> do
-                fileRef <- liftIO $ storeFile store name
+                fileRef <- storeFile store name
                 return $ DirEnt
                     { entName = B8.pack $ takeFileName name
                     , entRef = fileRef
@@ -263,18 +313,20 @@ storeFile store filename = do
             .| buildTree store
         return $ Dir blobRef
     else
-        throwIO $ userError "Unsupported file type."
+        throwM $ userError "Unsupported file type."
 
-extractFile :: Store -> BlobRef -> FilePath -> IO ()
-extractFile store ref path = runConduitRes $
-    loadBlob store ref .| sinkFileBS path
+extractFile :: MonadFileSystem m => Store -> BlobRef -> FilePath -> m ()
+extractFile store ref path = bracket
+    (openBinaryFile path WriteMode)
+    hClose
+    (\h -> fsRunConduit $ loadBlob store ref .| fsSinkFileBS h)
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@. It returns a refernce to the Store.
 initStore :: FilePath -> IO Store
 initStore dir = do
     forM_ [0,1..0xff] $ \n -> do
-        createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
+        Dir.createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
     let store = Store dir
     saveBlock store zeroBlock
     return store
