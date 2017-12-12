@@ -47,9 +47,6 @@ class MonadMask m => MonadFileSystem m where
     -- at the base of the stack.
     fsSinkFileBS :: Handle m -> Consumer B.ByteString m ()
 
-    -- 'runConduit'
-    fsRunConduit :: ConduitM () Void m a -> m a
-
     getSymbolicLinkStatus :: (FileStatus m ~ status) => FilePath -> m status
     readSymbolicLink :: FilePath -> m FilePath
 
@@ -73,7 +70,6 @@ instance MonadFileSystem IO where
     readSymbolicLink = P.readSymbolicLink
     listDirectory = Dir.listDirectory
     createDirectoryIfMissing = Dir.createDirectoryIfMissing
-    fsRunConduit = runConduit
 
     -- just add pure. See the comments in the type class.
     isRegularFile = pure . P.isRegularFile

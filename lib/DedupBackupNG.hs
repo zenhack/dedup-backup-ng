@@ -149,7 +149,7 @@ hBlocks handle = do
 --
 -- Returns a BlobRef referencing the blob.
 saveBlob :: MonadFileSystem m => Store -> Handle m -> m BlobRef
-saveBlob store h = fsRunConduit $ hBlocks h .| buildTree store
+saveBlob store h = runConduit $ hBlocks h .| buildTree store
 
 -- Load a blob from disk.
 loadBlob :: MonadFileSystem m => Store -> BlobRef -> Producer m B.ByteString
@@ -233,7 +233,7 @@ storeFile store filename = do
         return (SymLink $ B8.pack target)
     else if isDir then do
         files <- listDirectory filename
-        blobRef <- fsRunConduit $
+        blobRef <- runConduit $
             yieldMany files
             .| mapMC (\name -> do
                 fileRef <- storeFile store name
@@ -252,7 +252,7 @@ extractFile :: MonadFileSystem m => Store -> BlobRef -> FilePath -> m ()
 extractFile store ref path = bracket
     (openBinaryFile path WriteMode)
     hClose
-    (\h -> fsRunConduit $ loadBlob store ref .| fsSinkFileBS h)
+    (\h -> runConduit $ loadBlob store ref .| fsSinkFileBS h)
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@. It returns a refernce to the Store.
