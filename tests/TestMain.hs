@@ -1,6 +1,6 @@
 module Main where
 
-import DedupBackupNG hiding (main)
+import DedupBackupNG
 
 import Control.Monad                        (replicateM)
 import System.Unix.Directory                (withTemporaryDirectory)

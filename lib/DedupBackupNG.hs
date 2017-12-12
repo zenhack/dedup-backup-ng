@@ -349,7 +349,3 @@ initStore dir = do
     let store = Store dir
     saveBlock store zeroBlock
     return store
-
--- | Placeholder for main, while we're still experimenting.
-main :: IO ()
-main = return ()
