@@ -17,6 +17,7 @@ cabal-version:       >=1.10
 
 library ddb-ng-lib
   exposed-modules:
+    MonadFileSystem,
     DedupBackupNG
   build-depends:
       base >=4.10 && <4.11
