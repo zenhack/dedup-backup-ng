@@ -13,8 +13,9 @@ import Data.Int                 (Int64)
 import System.IO.Error
     (doesNotExistErrorType, illegalOperationErrorType, mkIOError)
 
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.HashMap.Strict  as M
+import qualified Data.ByteString.Char8 as B8
+import qualified Data.ByteString.Lazy  as LBS
+import qualified Data.HashMap.Strict   as M
 
 newtype FakeFS a = FakeFS { runFakeFS :: CatchT (State FsState) a }
     deriving(Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadMask)
@@ -30,14 +31,14 @@ newtype INodeRef = INodeRef Int
 data FakeFile = FakeFile !Offset !INodeRef
 
 data FsState = FsState
-    { handles :: M.HashMap FakeHandle FakeFile
-    , files   :: M.HashMap FilePath INodeRef
-    , inodes  :: M.HashMap INodeRef INode
+    { handles  :: M.HashMap FakeHandle FakeFile
+    , rootNode ::  INodeRef
+    , inodes   :: M.HashMap INodeRef INode
     }
 
 data INode
     = IRegFile LBS.ByteString
-    | IDirectory [FilePath]
+    | IDirectory (M.HashMap FilePath INodeRef)
     | ISymLink FilePath
 
 
@@ -54,13 +55,36 @@ nilStatus = FakeFileStatus
     , _isRegularFile = False
     }
 
+parsePath :: FilePath -> [String]
+parsePath path = normalize (split '/' path)
+  where
+    split c = map B8.unpack . B8.split c . B8.pack
+    normalize (".":xs)    = normalize xs
+    normalize ("":xs)     = normalize xs
+    normalize (_:"..":xs) = normalize xs
+    normalize (x:xs)      = x:normalize xs
+    normalize []          = []
+
 inodeByPath :: FilePath -> FakeFS INode
 inodeByPath path = FakeFS $ do
     FsState{..} <- get
-    case M.lookup path files >>= \iref -> M.lookup iref inodes of
-        Just inode -> return inode
-        Nothing    ->
-            throwM $ mkIOError doesNotExistErrorType "" Nothing (Just path)
+    go rootNode (parsePath path)
+  where
+    go :: INodeRef -> [String] -> CatchT (State FsState) INode
+    go iref pathParts = do
+        FsState{..} <- get
+        case (M.lookup iref inodes, pathParts) of
+            (Just inode, []) ->
+                return inode
+            (Just (IDirectory dir), p:ps) -> case M.lookup p dir of
+                Just iref' ->
+                    go iref' ps
+                Nothing ->
+                    throwM $ mkIOError doesNotExistErrorType "" Nothing Nothing
+            (Just _, _:_) ->
+                throwM $ mkIOError illegalOperationErrorType "Not a directory" Nothing Nothing
+            (Nothing, _) ->
+                error "BUG: INodeRef for absent INode."
 
 instance MonadFileSystem FakeFS where
     type Handle FakeFS = FakeHandle
