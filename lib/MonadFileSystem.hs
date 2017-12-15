@@ -33,7 +33,9 @@ class MonadMask m => MonadFileSystem m where
     createExclusive :: FilePath -> m (Handle m)
 
     listDirectory :: FilePath -> m [FilePath]
-    createDirectoryIfMissing :: Bool -> FilePath -> m ()
+
+    -- | equivalent to @'createDirectoryIfMissing' True@.
+    mkdirP :: FilePath -> m ()
 
     getSymbolicLinkStatus :: (FileStatus m ~ status) => FilePath -> m status
     readSymbolicLink :: FilePath -> m FilePath
@@ -58,7 +60,8 @@ instance MonadFileSystem IO where
     getSymbolicLinkStatus = P.getSymbolicLinkStatus
     readSymbolicLink = P.readSymbolicLink
     listDirectory = Dir.listDirectory
-    createDirectoryIfMissing = Dir.createDirectoryIfMissing
+
+    mkdirP = Dir.createDirectoryIfMissing True
 
     -- just add pure. See the comments in the type class.
     isRegularFile = pure . P.isRegularFile

@@ -271,7 +271,7 @@ extractFile store ref path = bracket
 initStore :: MonadFileSystem m => FilePath -> m Store
 initStore dir = do
     forM_ [0,1..0xff] $ \n -> do
-        createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
+        mkdirP $ printf "%s/sha256/%02x" dir (n :: Int)
     let store = Store dir
     saveBlock store zeroBlock
     return store
