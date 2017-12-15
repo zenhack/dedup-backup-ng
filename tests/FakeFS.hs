@@ -122,7 +122,7 @@ instance MonadFileSystem FakeFS where
     hPutBS h bytes = do
         -- TODO: check that the mode of h is writable
         fs@FsState{..} <- FakeFS get
-        file@FakeFile{..} <- lookupHandle h
+        FakeFile{..} <- lookupHandle h
         FakeFS $ put fs
             { inodes = M.adjust
                 (\inode -> case inode of
@@ -178,7 +178,7 @@ instance MonadFileSystem FakeFS where
 
 lookupHandle :: FakeHandle -> FakeFS FakeFile
 lookupHandle h = FakeFS $ do
-    fs@FsState{..} <- get
+    FsState{..} <- get
     case M.lookup h handles of
         Just file -> return file
         Nothing ->
