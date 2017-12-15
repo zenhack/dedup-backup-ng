@@ -102,22 +102,42 @@ instance MonadFileSystem FakeFS where
     type Handle FakeFS = FakeHandle
     type FileStatus FakeFS = FakeFileStatus
 
-    hGetBS h len = FakeFS $ do
-        -- TODO: check that the mode of h is readable.
-        fs@FsState{..} <- get
-        case M.lookup h handles of
-            Nothing ->
-                throwM $ mkIOError illegalOperationErrorType "Invalid Handle" Nothing Nothing
-            Just (file@FakeFile{..}) -> case M.lookup inodeRef inodes of
-                Just (IRegFile bytes) -> do
-                    let result = LBS.take (fromIntegral len) $ LBS.drop offset bytes
-                    let off' = max (offset + fromIntegral len) (LBS.length bytes)
-                    put fs { handles = M.insert h (file { offset = off'
-                                                        , inodeRef = inodeRef
-                                                        }) handles
-                           }
-                    return $ LBS.toStrict result
-                _ -> error "BUG: Handle is valid but inode does not exist."
+    hGetBS h len = do
+        file@FakeFile{..} <- lookupHandle h
+        -- TODO: check that mode is readable.
+        inode <- getFileINode file
+        case inode of
+            (IRegFile bytes) -> do
+                fs@FsState{..} <- FakeFS get
+                let result = LBS.take (fromIntegral len) $ LBS.drop offset bytes
+                let off' = max (offset + fromIntegral len) (LBS.length bytes)
+                FakeFS $ put fs { handles = M.insert h
+                                    (file { offset = off'
+                                          , inodeRef = inodeRef
+                                          }) handles
+                                }
+                return $ LBS.toStrict result
+            _ -> error "BUG: handle points to non-regular file."
+
+    hPutBS h bytes = do
+        -- TODO: check that the mode of h is writable
+        fs@FsState{..} <- FakeFS get
+        file@FakeFile{..} <- lookupHandle h
+        FakeFS $ put fs
+            { inodes = M.adjust
+                (\inode -> case inode of
+                    (IRegFile oldbytes) -> IRegFile $ mconcat
+                        [ LBS.take offset oldbytes
+                        , LBS.fromStrict bytes
+                        , LBS.drop
+                            (offset + fromIntegral (B8.length bytes))
+                            oldbytes
+                        ]
+                    _ ->
+                        error "BUG: handle points to non-regular file.")
+                inodeRef
+                inodes
+            }
 
     hClose h = FakeFS $ modify $
         \fs -> fs { handles = M.delete h (handles fs) }
@@ -155,6 +175,21 @@ instance MonadFileSystem FakeFS where
     isDirectory = pure . _isDirectory
     isSymbolicLink = pure . _isSymbolicLink
     isRegularFile = pure . _isRegularFile
+
+lookupHandle :: FakeHandle -> FakeFS FakeFile
+lookupHandle h = FakeFS $ do
+    fs@FsState{..} <- get
+    case M.lookup h handles of
+        Just file -> return file
+        Nothing ->
+            throwM $ mkIOError illegalOperationErrorType "Invalid Handle" Nothing Nothing
+
+getFileINode :: FakeFile -> FakeFS INode
+getFileINode FakeFile{..} = FakeFS $ do
+    FsState{..} <- get
+    case M.lookup inodeRef inodes of
+        Just inode -> return inode
+        Nothing    -> error "BUG: inode for file does not exist."
 
 -- | @'wrongFileType' expected path@ raise an error indicating an unexpected
 -- file type. @expected@ is the type of file that was expected. @path@, if not
