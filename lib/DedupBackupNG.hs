@@ -264,7 +264,7 @@ extractFile :: MonadFileSystem m => Store -> BlobRef -> FilePath -> m ()
 extractFile store ref path = bracket
     (openBinaryFile path WriteMode)
     hClose
-    (\h -> runConduit $ loadBlob store ref .| fsSinkFileBS h)
+    (\h -> runConduit $ loadBlob store ref .| mapM_C (hPutBS h))
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@. It returns a refernce to the Store.

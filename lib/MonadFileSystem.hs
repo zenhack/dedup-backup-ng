@@ -2,8 +2,6 @@
 {-# LANGUAGE TypeFamilies #-}
 module MonadFileSystem where
 
-import Conduit
-
 import Control.Monad.Catch (MonadMask)
 
 import qualified Data.ByteString    as B
@@ -37,13 +35,6 @@ class MonadMask m => MonadFileSystem m where
     listDirectory :: FilePath -> m [FilePath]
     createDirectoryIfMissing :: Bool -> FilePath -> m ()
 
-    -- Like 'sinkFileBS', except that it doesn't need to run in a MonadResource,
-    -- and accepts a file handle, rather than a path.
-    --
-    -- This makes things easier to work with since runConduitRes requires IO
-    -- at the base of the stack.
-    fsSinkFileBS :: Handle m -> Consumer B.ByteString m ()
-
     getSymbolicLinkStatus :: (FileStatus m ~ status) => FilePath -> m status
     readSymbolicLink :: FilePath -> m FilePath
 
@@ -73,8 +64,6 @@ instance MonadFileSystem IO where
     isRegularFile = pure . P.isRegularFile
     isDirectory = pure . P.isDirectory
     isSymbolicLink = pure . P.isSymbolicLink
-
-    fsSinkFileBS h = mapM_C (B.hPut h)
 
     createExclusive filename = P.fdToHandle =<< P.openFd
             filename
