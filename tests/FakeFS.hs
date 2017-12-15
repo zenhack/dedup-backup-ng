@@ -159,6 +159,12 @@ instance MonadFileSystem FakeFS where
             IRegFile bytes -> return $ LBS.toStrict bytes
             _              -> wrongFileType "regular file" (Just path)
 
+    listDirectory path = do
+        (_, inode) <- inodeByPath path
+        case inode of
+            IDirectory dir -> return $ M.keys dir
+            _              -> wrongFileType "directory" (Just path)
+
     getSymbolicLinkStatus path = do
         (_, inode) <- inodeByPath path
         return $ case inode of
