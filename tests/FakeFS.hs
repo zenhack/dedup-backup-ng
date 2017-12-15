@@ -133,6 +133,13 @@ instance MonadFileSystem FakeFS where
             fs { handles = M.insert h file handles })
         return h
 
+    readFileBS path = do
+        (_, inode) <- inodeByPath path
+        case inode of
+            IRegFile bytes -> return $ LBS.toStrict bytes
+            _ ->
+                throwM $ mkIOError illegalOperationErrorType "Not a regular file" Nothing (Just path)
+
     getSymbolicLinkStatus path = do
         (_, inode) <- inodeByPath path
         return $ case inode of
