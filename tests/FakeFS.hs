@@ -94,7 +94,7 @@ inodeByPath path = FakeFS $ do
                 Nothing ->
                     throwM $ mkIOError doesNotExistErrorType "" Nothing Nothing
             (Just _, _:_) ->
-                throwM $ mkIOError illegalOperationErrorType "Not a directory" Nothing Nothing
+                wrongFileType "directory" Nothing
             (Nothing, _) ->
                 error "BUG: INodeRef for absent INode."
 
@@ -137,8 +137,7 @@ instance MonadFileSystem FakeFS where
         (_, inode) <- inodeByPath path
         case inode of
             IRegFile bytes -> return $ LBS.toStrict bytes
-            _ ->
-                throwM $ mkIOError illegalOperationErrorType "Not a regular file" Nothing (Just path)
+            _              -> wrongFileType "regular file" (Just path)
 
     getSymbolicLinkStatus path = do
         (_, inode) <- inodeByPath path
@@ -150,11 +149,19 @@ instance MonadFileSystem FakeFS where
     readSymbolicLink path = do
         (_, inode) <- inodeByPath path
         case inode of
-            ISymLink target ->
-                return target
-            _               ->
-                throwM $ mkIOError illegalOperationErrorType "Not a symlink" Nothing (Just path)
+            ISymLink target -> return target
+            _               -> wrongFileType "symlink" (Just path)
 
     isDirectory = pure . _isDirectory
     isSymbolicLink = pure . _isSymbolicLink
     isRegularFile = pure . _isRegularFile
+
+-- | @'wrongFileType' expected path@ raise an error indicating an unexpected
+-- file type. @expected@ is the type of file that was expected. @path@, if not
+-- 'Nothing', is the path to the relevant file.
+wrongFileType :: MonadThrow m => String -> Maybe FilePath -> m a
+wrongFileType expected path = throwM $ mkIOError
+    illegalOperationErrorType
+    ("Wrong file type; expected " ++ expected)
+    Nothing
+    path
