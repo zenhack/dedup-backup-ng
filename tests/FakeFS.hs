@@ -8,6 +8,7 @@ import MonadFileSystem
 import Control.Monad.Catch      (MonadCatch, MonadMask(..), MonadThrow(..))
 import Control.Monad.Catch.Pure (CatchT)
 import Control.Monad.State      (State, get, modify, put)
+import Data.Function            ((&))
 import Data.Hashable            (Hashable)
 import Data.Int                 (Int64)
 import System.IO                (IOMode)
@@ -40,6 +41,7 @@ data FsState = FsState
     , rootNode   :: !INodeRef
     , inodes     :: M.HashMap INodeRef INode
     , nextHandle :: !Int
+    , nextIRef   :: !Int
     }
 
 data INode
@@ -74,8 +76,14 @@ parsePath path = normalize (split '/' path)
 newHandle :: FakeFS FakeHandle
 newHandle = FakeFS $ do
     fs@FsState{..} <- get
-    put fs { nextHandle = nextHandle + 1}
+    put fs { nextHandle = nextHandle + 1 }
     return $ FakeHandle nextHandle
+
+newINodeRef :: FakeFS INodeRef
+newINodeRef = FakeFS $ do
+    fs@FsState{..} <- get
+    put fs { nextIRef = nextIRef + 1 }
+    return $ INodeRef nextIRef
 
 inodeByPath :: FilePath -> FakeFS (INodeRef, INode)
 inodeByPath path = FakeFS $ do
@@ -164,6 +172,32 @@ instance MonadFileSystem FakeFS where
         case inode of
             IDirectory dir -> return $ M.keys dir
             _              -> wrongFileType "directory" (Just path)
+
+    mkdirP path = do
+        FsState{..} <- FakeFS get
+        let Just (IDirectory node) = M.lookup rootNode inodes
+        go rootNode node (parsePath path)
+      where
+        go :: INodeRef -> M.HashMap FilePath INodeRef -> [FilePath] -> FakeFS ()
+        go _ _ [] = return ()
+        go parentIRef parentDirEnts (p:ps) = do
+            fs@FsState{..} <- FakeFS get
+            case M.lookup p parentDirEnts of
+                Just childIRef -> case M.lookup childIRef inodes of
+                    Just (IDirectory childDirEnts) ->
+                        go childIRef childDirEnts ps
+                    Just _ ->
+                        wrongFileType "directory" (Just p)
+                    Nothing ->
+                        error "BUG: iref with no inode"
+                Nothing -> do
+                    childIRef <- newINodeRef
+                    let parentDirEnts' = M.insert p childIRef parentDirEnts
+                    FakeFS $ put fs { inodes = inodes
+                                        & M.insert childIRef (IDirectory M.empty)
+                                        & M.insert parentIRef (IDirectory parentDirEnts')
+                                    }
+
 
     getSymbolicLinkStatus path = do
         (_, inode) <- inodeByPath path
