@@ -5,15 +5,21 @@ module FakeFS where
 
 import MonadFileSystem
 
-import Control.Monad.Catch      (MonadCatch, MonadMask(..), MonadThrow(..))
+import Control.Monad.Catch      (MonadCatch, MonadMask(..), MonadThrow(..), try)
 import Control.Monad.Catch.Pure (CatchT)
 import Control.Monad.State      (State, get, modify, put)
 import Data.Function            ((&))
 import Data.Hashable            (Hashable)
 import Data.Int                 (Int64)
-import System.IO                (IOMode)
+import System.FilePath          (takeDirectory, takeFileName)
+import System.IO                (IOMode(ReadWriteMode))
 import System.IO.Error
-    (doesNotExistErrorType, illegalOperationErrorType, mkIOError)
+    ( alreadyExistsErrorType
+    , doesNotExistErrorType
+    , illegalOperationErrorType
+    , isDoesNotExistError
+    , mkIOError
+    )
 
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Lazy  as LBS
@@ -166,6 +172,37 @@ instance MonadFileSystem FakeFS where
         case inode of
             IRegFile bytes -> return $ LBS.toStrict bytes
             _              -> wrongFileType "regular file" (Just path)
+
+    createExclusive path = do
+        existingFile <- try $ inodeByPath path
+        case existingFile of
+            Right _ -> throwM $ mkIOError
+                alreadyExistsErrorType
+                "File already exists"
+                Nothing
+                (Just path)
+            Left e
+                | isDoesNotExistError e -> do
+                    (parentIRef, parentINode) <- inodeByPath $ takeDirectory path
+                    case parentINode of
+                        IDirectory oldDirEnts -> do
+                            iref <- newINodeRef
+                            h <- newHandle
+                            FakeFS $ modify $ \fs@FsState{..} -> fs
+                                { handles = M.insert
+                                    h
+                                    FakeFile { mode = ReadWriteMode, offset = 0, inodeRef = iref }
+                                    handles
+                                , inodes =
+                                    let newDirEnts = M.insert (takeFileName path) iref oldDirEnts
+                                    in  M.insert parentIRef (IDirectory newDirEnts) $
+                                        M.insert iref (IRegFile LBS.empty)
+                                        inodes
+                                }
+                            return h
+                        _ -> wrongFileType "directory" $ Just (takeDirectory path)
+                | otherwise -> throwM e
+
 
     listDirectory path = do
         (_, inode) <- inodeByPath path
