@@ -3,7 +3,11 @@ module Main where
 import DedupBackupNG
 import MonadFileSystem
 
+import FakeFS (runFakeFS)
+
+import Control.Exception                    (catch, throwIO)
 import Control.Monad                        (replicateM)
+import System.Environment                   (getEnv)
 import System.Unix.Directory                (withTemporaryDirectory)
 import Test.Framework                       (defaultMain)
 import Test.Framework.Providers.QuickCheck2 (testProperty)
@@ -33,9 +37,18 @@ saveRestoreBlob path blob = do
 
 prop_saveRestoreBlob :: Property
 prop_saveRestoreBlob = monadicIO $ do
+    -- if the environment variable TEST_IN_IO is defined, we run this in IO,
+    -- otherwise we use FakeFS.
+    useIO <- run $
+        (getEnv "TEST_IN_IO" >> return True)
+      `catch` (const (return False) :: IOError -> IO Bool)
     blob <- pick genBlob
-    run $ withTemporaryDirectory "/tmp/store.XXXXXX" $ \path ->
-        saveRestoreBlob path blob
+    if useIO
+        then run $ withTemporaryDirectory "/tmp/store.XXXXXX" $ \path ->
+                saveRestoreBlob path blob
+        else case runFakeFS $ saveRestoreBlob "" blob of
+                Left e       -> run $ throwIO e
+                Right result -> return result
 
 main :: IO ()
 main = defaultMain
