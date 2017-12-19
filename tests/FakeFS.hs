@@ -5,14 +5,15 @@ module FakeFS where
 
 import MonadFileSystem
 
-import Control.Monad.Catch      (MonadCatch, MonadMask(..), MonadThrow(..), try)
-import Control.Monad.Catch.Pure (CatchT)
-import Control.Monad.State      (State, get, modify, put)
-import Data.Function            ((&))
-import Data.Hashable            (Hashable)
-import Data.Int                 (Int64)
-import System.FilePath          (takeDirectory, takeFileName)
-import System.IO                (IOMode(ReadWriteMode))
+import Control.Monad.Catch
+    (MonadCatch, MonadMask(..), MonadThrow(..), SomeException, bracket, try)
+import Control.Monad.Catch.Pure   (CatchT, runCatchT)
+import Control.Monad.State.Strict (State, evalState, get, modify, put)
+import Data.Function              ((&))
+import Data.Hashable              (Hashable)
+import Data.Int                   (Int64)
+import System.FilePath            (takeDirectory, takeFileName)
+import System.IO                  (IOMode(ReadWriteMode))
 import System.IO.Error
     ( alreadyExistsErrorType
     , doesNotExistErrorType
@@ -25,8 +26,19 @@ import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Lazy  as LBS
 import qualified Data.HashMap.Strict   as M
 
-newtype FakeFS a = FakeFS { runFakeFS :: CatchT (State FsState) a }
+newtype FakeFS a = FakeFS (CatchT (State FsState) a)
     deriving(Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadMask)
+
+runFakeFS :: FakeFS a -> Either SomeException a
+runFakeFS (FakeFS catchT) = flip evalState initState $ runCatchT catchT
+  where
+    initState = FsState
+        { handles = M.empty
+        , rootNode = INodeRef 0
+        , inodes = M.fromList [(INodeRef 0, IDirectory M.empty)]
+        , nextHandle = 0
+        , nextIRef = 1
+        }
 
 newtype FakeHandle = FakeHandle Int
     deriving(Show, Eq, Ord, Hashable)
@@ -166,6 +178,29 @@ instance MonadFileSystem FakeFS where
         FakeFS $ modify (\fs@FsState{..} ->
             fs { handles = M.insert h file handles })
         return h
+
+    writeFileBS path bytes = do
+        result <- try $ inodeByPath path
+        case result of
+            Right (iref, IRegFile _) -> writeINode iref
+            Right _ -> wrongFileType "regular file" (Just path)
+            Left e
+                | isDoesNotExistError e -> do
+                    -- Make sure the parent exists:
+                    _ <- inodeByPath (takeDirectory path)
+                    bracket
+                        (createExclusive path)
+                        hClose
+                        (\h -> hPutBS h bytes)
+                | otherwise -> throwM e
+      where
+        writeINode iref = FakeFS $ modify $ \fs@FsState{..} ->
+            fs { inodes = M.insert
+                    iref
+                    (IRegFile (LBS.fromStrict bytes))
+                    inodes
+               }
+
 
     readFileBS path = do
         (_, inode) <- inodeByPath path

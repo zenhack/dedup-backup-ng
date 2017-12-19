@@ -26,6 +26,9 @@ class MonadMask m => MonadFileSystem m where
     hClose :: Handle m -> m ()
     openBinaryFile :: FilePath -> IO.IOMode -> m (Handle m)
 
+    -- 'B.writeFile'
+    writeFileBS :: FilePath -> B.ByteString -> m ()
+
     -- 'B.readFile'
     readFileBS :: FilePath -> m B.ByteString
 
@@ -56,6 +59,7 @@ instance MonadFileSystem IO where
     hPutBS = B.hPut
     hClose = IO.hClose
     openBinaryFile = IO.openBinaryFile
+    writeFileBS = B.writeFile
     readFileBS = B.readFile
     getSymbolicLinkStatus = P.getSymbolicLinkStatus
     readSymbolicLink = P.readSymbolicLink

@@ -1,6 +1,7 @@
 module Main where
 
 import DedupBackupNG
+import MonadFileSystem
 
 import Control.Monad                        (replicateM)
 import System.Unix.Directory                (withTemporaryDirectory)
@@ -18,20 +19,23 @@ genBlob = do
     numBytes <- choose (0 :: Int, 4 * 1024 * 1024)
     B.pack <$> replicateM numBytes arbitrary
 
+saveRestoreBlob :: MonadFileSystem m => FilePath -> B.ByteString -> m Bool
+saveRestoreBlob path blob = do
+    let oldPath = path ++ "/old"
+        newPath = path ++ "/new"
+    writeFileBS oldPath blob
+    store <- initStore (path ++ "/store")
+    RegFile ref <- storeFile store oldPath
+    extractFile store ref newPath
+    old <- readFileBS oldPath
+    new <- readFileBS newPath
+    return (old == new)
+
 prop_saveRestoreBlob :: Property
 prop_saveRestoreBlob = monadicIO $ do
     blob <- pick genBlob
-    -- run $ print (LB.length blob)
-    run $ withTemporaryDirectory "/tmp/store.XXXXXX" $ \path -> do
-        let oldPath = path ++ "/old"
-            newPath = path ++ "/new"
-        B.writeFile oldPath blob
-        store <- initStore (path ++ "/store")
-        RegFile ref <- storeFile store oldPath
-        extractFile store ref newPath
-        old <- B.readFile oldPath
-        new <- B.readFile newPath
-        return (old == new)
+    run $ withTemporaryDirectory "/tmp/store.XXXXXX" $ \path ->
+        saveRestoreBlob path blob
 
 main :: IO ()
 main = defaultMain
