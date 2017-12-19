@@ -41,18 +41,19 @@ runFakeFS (FakeFS catchT) = flip evalState initState $ runCatchT catchT
         }
 
 newtype FakeHandle = FakeHandle Int
-    deriving(Show, Eq, Ord, Hashable)
+    deriving(Show, Read, Eq, Ord, Hashable)
 
 type Offset = Int64
 
 newtype INodeRef = INodeRef Int
-    deriving(Show, Eq, Ord, Hashable)
+    deriving(Show, Read, Eq, Ord, Hashable)
 
 data FakeFile = FakeFile
     { mode     :: !IOMode
     , offset   :: !Offset
     , inodeRef :: !INodeRef
     }
+    deriving(Show, Read, Eq)
 
 data FsState = FsState
     { handles    :: M.HashMap FakeHandle FakeFile
@@ -61,11 +62,13 @@ data FsState = FsState
     , nextHandle :: !Int
     , nextIRef   :: !Int
     }
+    deriving(Show, Read, Eq)
 
 data INode
     = IRegFile LBS.ByteString
     | IDirectory (M.HashMap FilePath INodeRef)
     | ISymLink FilePath
+    deriving(Show, Read, Eq)
 
 
 data FakeFileStatus = FakeFileStatus
@@ -73,6 +76,11 @@ data FakeFileStatus = FakeFileStatus
     , _isSymbolicLink :: Bool
     , _isRegularFile  :: Bool
     }
+
+bug :: String -> FakeFS a
+bug message = FakeFS $ do
+    fs <- get
+    error $ message ++ "State: " ++ show fs
 
 nilStatus :: FakeFileStatus
 nilStatus = FakeFileStatus
@@ -104,13 +112,13 @@ newINodeRef = FakeFS $ do
     return $ INodeRef nextIRef
 
 inodeByPath :: FilePath -> FakeFS (INodeRef, INode)
-inodeByPath path = FakeFS $ do
-    FsState{..} <- get
+inodeByPath path = do
+    FsState{..} <- FakeFS get
     go rootNode (parsePath path)
   where
-    go :: INodeRef -> [String] -> CatchT (State FsState) (INodeRef, INode)
+    go :: INodeRef -> [String] -> FakeFS (INodeRef, INode)
     go iref pathParts = do
-        FsState{..} <- get
+        FsState{..} <- FakeFS get
         case (M.lookup iref inodes, pathParts) of
             (Just inode, []) ->
                 return (iref, inode)
@@ -122,7 +130,7 @@ inodeByPath path = FakeFS $ do
             (Just _, _:_) ->
                 wrongFileType "directory" Nothing
             (Nothing, _) ->
-                error "BUG: INodeRef for absent INode."
+                bug "INodeRef for absent INode."
 
 instance MonadFileSystem FakeFS where
     type Handle FakeFS = FakeHandle
@@ -137,13 +145,9 @@ instance MonadFileSystem FakeFS where
                 fs@FsState{..} <- FakeFS get
                 let result = LBS.take (fromIntegral len) $ LBS.drop offset bytes
                 let off' = max (offset + fromIntegral len) (LBS.length bytes)
-                FakeFS $ put fs { handles = M.insert h
-                                    (file { offset = off'
-                                          , inodeRef = inodeRef
-                                          }) handles
-                                }
+                FakeFS $ put fs { handles = M.insert h file { offset = off' } handles }
                 return $ LBS.toStrict result
-            _ -> error "BUG: handle points to non-regular file."
+            _ -> bug $ "handle points to non-regular file."
 
     hPutBS h bytes = do
         -- TODO: check that the mode of h is writable
@@ -160,7 +164,7 @@ instance MonadFileSystem FakeFS where
                             oldbytes
                         ]
                     _ ->
-                        error "BUG: handle points to non-regular file.")
+                        error $ "BUG: handle points to non-regular file. State: " ++ show fs)
                 inodeRef
                 inodes
             }
@@ -169,15 +173,19 @@ instance MonadFileSystem FakeFS where
         \fs -> fs { handles = M.delete h (handles fs) }
 
     openBinaryFile path mode = do
-        (iref, _) <- inodeByPath path
-        h <- newHandle
-        let file = FakeFile { mode = mode
-                            , offset = 0
-                            , inodeRef = iref
-                            }
-        FakeFS $ modify (\fs@FsState{..} ->
-            fs { handles = M.insert h file handles })
-        return h
+        (iref, inode) <- inodeByPath path
+        case inode of
+            IRegFile _ -> do
+                h <- newHandle
+                let file = FakeFile { mode = mode
+                                    , offset = 0
+                                    , inodeRef = iref
+                                    }
+                FakeFS $ modify (\fs@FsState{..} ->
+                    fs { handles = M.insert h file handles })
+                return h
+            _ ->
+                wrongFileType "regular file" (Just path)
 
     writeFileBS path bytes = do
         result <- try $ inodeByPath path
@@ -261,7 +269,7 @@ instance MonadFileSystem FakeFS where
                     Just _ ->
                         wrongFileType "directory" (Just p)
                     Nothing ->
-                        error "BUG: iref with no inode"
+                        bug "iref with no inode"
                 Nothing -> do
                     childIRef <- newINodeRef
                     let parentDirEnts' = M.insert p childIRef parentDirEnts
@@ -269,6 +277,7 @@ instance MonadFileSystem FakeFS where
                                         & M.insert childIRef (IDirectory M.empty)
                                         & M.insert parentIRef (IDirectory parentDirEnts')
                                     }
+                    go childIRef M.empty ps
 
 
     getSymbolicLinkStatus path = do
@@ -297,11 +306,11 @@ lookupHandle h = FakeFS $ do
             throwM $ mkIOError illegalOperationErrorType "Invalid Handle" Nothing Nothing
 
 getFileINode :: FakeFile -> FakeFS INode
-getFileINode FakeFile{..} = FakeFS $ do
-    FsState{..} <- get
+getFileINode FakeFile{..} = do
+    FsState{..} <- FakeFS get
     case M.lookup inodeRef inodes of
         Just inode -> return inode
-        Nothing    -> error "BUG: inode for file does not exist."
+        Nothing    -> bug "inode for file does not exist."
 
 -- | @'wrongFileType' expected path@ raise an error indicating an unexpected
 -- file type. @expected@ is the type of file that was expected. @path@, if not
