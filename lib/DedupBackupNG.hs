@@ -34,9 +34,11 @@ import qualified Crypto.Hash.SHA256 as SHA256
 
 import Conduit
 
-import Codec.Serialise       (Serialise, serialise)
+import Codec.Serialise
+    (IDecode(..), Serialise, deserialiseIncremental, serialise)
 import Control.Monad         (forM_, unless, when)
 import Control.Monad.Catch   (bracket, catch, throwM)
+import Control.Monad.ST      (stToIO)
 import Data.Int              (Int64)
 import Data.Monoid           ((<>))
 import GHC.Generics          (Generic)
@@ -115,6 +117,22 @@ hashSize = 256 `div` 8
 -- | Compute the hash of a block.
 hash :: Block -> HashedBlock
 hash block@(Block bytes) = HashedBlock (Hash (SHA256.hash bytes)) block
+
+decodeStreaming :: Serialise a => ConduitM B.ByteString a IO ()
+decodeStreaming = decodeIO >>= go
+  where
+    decodeIO = liftIO $ stToIO $ deserialiseIncremental
+    go (Partial resume) = do
+        next <- await
+        idecode <- liftIO $ stToIO $ resume next
+        go idecode
+    go (Done rest _ val) = do
+        yield val
+        (yield rest >> mapC id) .| (decodeIO >>= go)
+    -- Just the end of the stream:
+    go (Fail rest 0 _) | B.null rest = return ()
+    -- An actual failure:
+    go (Fail _ _ exn) = throwM exn
 
 -- | @'blockPath' store digest@ is the file name in which the block with
 -- sha256 hash @digest@ should be saved within the given store.
@@ -252,7 +270,7 @@ storeFile store filename = do
         blobRef <- runConduit $
             yieldMany files
             .| mapMC (\name -> do
-                fileRef <- storeFile store name
+                fileRef <- storeFile store (filename ++ "/" ++ name)
                 return $ DirEnt
                     { entName = B8.pack $ takeFileName name
                     , entRef = fileRef
@@ -272,6 +290,16 @@ extractFile store ref path = case ref of
         (\h -> runConduit $ loadBlob store blobRef .| mapM_C (B.hPut h))
     SymLink target ->
         P.createSymbolicLink (B8.unpack target) path
+    Dir blobRef -> do
+        createDirectoryIfMissing False path
+        runConduit $
+            loadBlob store blobRef
+            .| decodeStreaming
+            .| mapM_C (extractDirEnt path)
+  where
+    extractDirEnt dirPath ent = extractFile store
+        (entRef ent)
+        (dirPath ++ "/" ++ B8.unpack (entName ent))
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@. It returns a refernce to the Store.
