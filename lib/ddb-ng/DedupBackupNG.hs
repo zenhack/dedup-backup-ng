@@ -265,6 +265,8 @@ extractFile store ref path = case ref of
         (openBinaryFile path WriteMode)
         hClose
         (\h -> runConduit $ loadBlob store blobRef .| mapM_C (hPutBS h))
+    SymLink target ->
+        createSymbolicLink (B8.unpack target) path
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@. It returns a refernce to the Store.

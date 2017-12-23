@@ -287,6 +287,8 @@ instance MonadFileSystem FakeFS where
             IDirectory _ -> nilStatus { _isDirectory = True }
             ISymLink _   -> nilStatus { _isSymbolicLink = True }
 
+    createSymbolicLink = undefined
+
     readSymbolicLink path = do
         (_, inode) <- inodeByPath path
         case inode of

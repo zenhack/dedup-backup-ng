@@ -41,6 +41,7 @@ class MonadMask m => MonadFileSystem m where
     mkdirP :: FilePath -> m ()
 
     getSymbolicLinkStatus :: (FileStatus m ~ status) => FilePath -> m status
+    createSymbolicLink :: FilePath -> FilePath -> m ()
     readSymbolicLink :: FilePath -> m FilePath
 
     -- These are like their counterparts from the unix library, except that
@@ -62,6 +63,7 @@ instance MonadFileSystem IO where
     writeFileBS = B.writeFile
     readFileBS = B.readFile
     getSymbolicLinkStatus = P.getSymbolicLinkStatus
+    createSymbolicLink = P.createSymbolicLink
     readSymbolicLink = P.readSymbolicLink
     listDirectory = Dir.listDirectory
 
