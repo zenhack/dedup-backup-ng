@@ -30,6 +30,7 @@ library ddb-ng-lib
     , serialise >= 0.2 && <0.3
     , filepath >= 1.4 && <1.5
     , exceptions >= 0.8 && <0.9
+    , optparse-applicative >=0.14 && <0.15
   hs-source-dirs:      lib
   ghc-options:
     -Wall
