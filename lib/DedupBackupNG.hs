@@ -34,16 +34,15 @@ import qualified Crypto.Hash.SHA256 as SHA256
 
 import Conduit
 
-import MonadFileSystem
-
 import Codec.Serialise       (Serialise, serialise)
 import Control.Monad         (forM_, unless, when)
 import Control.Monad.Catch   (bracket, catch, throwM)
 import Data.Int              (Int64)
 import Data.Monoid           ((<>))
 import GHC.Generics          (Generic)
+import System.Directory      (createDirectoryIfMissing, listDirectory)
 import System.FilePath.Posix (takeFileName)
-import System.IO             (IOMode(..))
+import System.IO             (Handle, IOMode(..), hClose, openBinaryFile)
 import System.IO.Error       (isAlreadyExistsError)
 import Text.Printf           (printf)
 
@@ -52,6 +51,8 @@ import qualified Data.ByteString.Base16  as Base16
 import qualified Data.ByteString.Builder as Builder
 import qualified Data.ByteString.Char8   as B8
 import qualified Data.ByteString.Lazy    as LBS
+import qualified System.Posix.Files      as P
+import qualified System.Posix.IO         as P
 
 -- | newtype wrapper around a disk/storage block.
 newtype Block = Block B.ByteString
@@ -124,22 +125,22 @@ blockPath (Store storePath) (Hash digest) =
 
 -- | @'saveBlock' store block@ Saves @block@ to the store. If the block
 -- is already present, this is a no-op.
-saveBlock :: MonadFileSystem m => Store -> HashedBlock -> m ()
+saveBlock :: Store -> HashedBlock -> IO ()
 saveBlock store (HashedBlock digest (Block bytes)) =
     saveFile (blockPath store digest) bytes
 
 -- @'loadBlock@ store digest@ returns the block corresponding to the
 -- given sha256 hash from @store@.
-loadBlock :: MonadFileSystem m => Store -> Hash -> m Block
-loadBlock store digest = Block <$> readFileBS (blockPath store digest)
+loadBlock :: Store -> Hash -> IO Block
+loadBlock store digest = Block <$> B.readFile (blockPath store digest)
 
 -- | Read bytestrings from the handle in chunks of size 'blockSize'.
 --
 -- TODO: there's probably a library function that does this; we should
 -- look for for that and use it instead.
-hBlocks :: MonadFileSystem m => Handle m -> Source m Block
+hBlocks :: Handle -> Source IO Block
 hBlocks handle = do
-    bytes <- lift $ hGetBS handle blockSize
+    bytes <- lift $ B.hGet handle blockSize
     when (bytes /= B.empty) $ do
         yield (Block bytes)
         hBlocks handle
@@ -148,11 +149,11 @@ hBlocks handle = do
 -- to the store.
 --
 -- Returns a BlobRef referencing the blob.
-saveBlob :: MonadFileSystem m => Store -> Handle m -> m BlobRef
+saveBlob :: Store -> Handle -> IO BlobRef
 saveBlob store h = runConduit $ hBlocks h .| buildTree store
 
 -- Load a blob from disk.
-loadBlob :: MonadFileSystem m => Store -> BlobRef -> Producer m B.ByteString
+loadBlob :: Store -> BlobRef -> Producer IO B.ByteString
 loadBlob store (BlobRef 1 digest) = do
     Block bytes <- lift $ loadBlock store digest
     yield bytes
@@ -184,12 +185,12 @@ collectBlocks = go 0 mempty where
     yieldBlock = yield . Block . LBS.toStrict . Builder.toLazyByteString
 
 -- | Save all blocks in the stream to the store, and pass them along.
-saveBlocks :: MonadFileSystem m => Store -> ConduitM HashedBlock HashedBlock m ()
+saveBlocks :: Store -> ConduitM HashedBlock HashedBlock IO ()
 saveBlocks store = iterMC (saveBlock store)
 
 -- | 'buildTree' builds the tree for a blob consisting of the incoming (leaf)
 -- blocks. Returns a BlobRef to the root of the tree.
-buildTree :: MonadFileSystem m => Store -> Consumer Block m BlobRef
+buildTree :: Store -> Consumer Block IO BlobRef
 buildTree store = mapC hash .| saveBlocks store .| go 1
   where
     go n = do
@@ -219,30 +220,34 @@ buildNodes
 
 -- Save the provided ByteString to the named file, if the file does
 -- not already exist. If it does exist, this is a no-op.
-saveFile :: MonadFileSystem m => FilePath -> B.ByteString -> m ()
+saveFile :: FilePath -> B.ByteString -> IO ()
 saveFile filename bytes =
     bracket
-        (createExclusive filename)
+        createExclusive
         hClose
-        (\h -> hPutBS h bytes)
+        (\h -> B.hPut h bytes)
     `catch`
         (\e -> unless (isAlreadyExistsError e) $ throwM e)
+  where
+    createExclusive = P.fdToHandle =<< P.openFd
+            filename
+            P.WriteOnly
+            (Just 0o600)
+            P.defaultFileFlags { P.exclusive = True }
 
-storeFile :: MonadFileSystem m => Store -> FilePath -> m FileRef
+
+storeFile :: Store -> FilePath -> IO FileRef
 storeFile store filename = do
-    status <- getSymbolicLinkStatus filename
-    isFile <- isRegularFile status
-    isDir <- isDirectory status
-    isSymLink <- isSymbolicLink status
-    if isFile then
+    status <- P.getSymbolicLinkStatus filename
+    if P.isRegularFile status then
         bracket
             (openBinaryFile filename ReadMode)
             hClose
             (\h -> RegFile <$> saveBlob store h)
-    else if isSymLink then do
-        target <- readSymbolicLink filename
+    else if P.isSymbolicLink status then do
+        target <- P.readSymbolicLink filename
         return (SymLink $ B8.pack target)
-    else if isDir then do
+    else if P.isDirectory status then do
         files <- listDirectory filename
         blobRef <- runConduit $
             yieldMany files
@@ -259,21 +264,21 @@ storeFile store filename = do
     else
         throwM $ userError "Unsupported file type."
 
-extractFile :: MonadFileSystem m => Store -> FileRef -> FilePath -> m ()
+extractFile :: Store -> FileRef -> FilePath -> IO ()
 extractFile store ref path = case ref of
     RegFile blobRef -> bracket
         (openBinaryFile path WriteMode)
         hClose
-        (\h -> runConduit $ loadBlob store blobRef .| mapM_C (hPutBS h))
+        (\h -> runConduit $ loadBlob store blobRef .| mapM_C (B.hPut h))
     SymLink target ->
-        createSymbolicLink (B8.unpack target) path
+        P.createSymbolicLink (B8.unpack target) path
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@. It returns a refernce to the Store.
-initStore :: MonadFileSystem m => FilePath -> m Store
+initStore :: FilePath -> IO Store
 initStore dir = do
     forM_ [0,1..0xff] $ \n -> do
-        mkdirP $ printf "%s/sha256/%02x" dir (n :: Int)
+        createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
     let store = Store dir
     saveBlock store zeroBlock
     return store

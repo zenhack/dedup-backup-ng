@@ -15,32 +15,11 @@ build-type:          Simple
 extra-source-files:  ChangeLog.md
 cabal-version:       >=1.10
 
-library monadfs
-  exposed-modules:
-    MonadFileSystem,
-    FakeFS
-  build-depends:
-      base >=4.10 && <4.11
-    , directory >=1.3 && <1.4
-    , bytestring >=0.10 && <0.11
-    , unix >=2.7 && <2.8
-    , filepath >= 1.4 && <1.5
-    , exceptions >= 0.8 && <0.9
-    , unordered-containers
-    , hashable
-    , mtl
-  hs-source-dirs:      lib/monadfs
-  ghc-options:
-    -Wall
-    -O2
-  default-language:    Haskell2010
-
 library ddb-ng-lib
   exposed-modules:
     DedupBackupNG
   build-depends:
       base >=4.10 && <4.11
-    , monadfs
     , cryptohash-sha256 >=0.11 && <0.12
     , conduit-combinators >=1.1 && <1.2
     , directory >=1.3 && <1.4
@@ -50,7 +29,7 @@ library ddb-ng-lib
     , serialise >= 0.2 && <0.3
     , filepath >= 1.4 && <1.5
     , exceptions >= 0.8 && <0.9
-  hs-source-dirs:      lib/ddb-ng
+  hs-source-dirs:      lib
   ghc-options:
     -Wall
     -O2
@@ -73,7 +52,6 @@ test-suite tests
   build-depends:
       base
     , ddb-ng-lib
-    , monadfs
     , test-framework
     , test-framework-quickcheck2
     , QuickCheck
