@@ -41,6 +41,7 @@ import Control.Monad.Catch   (bracket, catch, throwM)
 import Control.Monad.ST      (stToIO)
 import Data.Int              (Int64)
 import Data.Monoid           ((<>))
+import Data.Word             (Word32)
 import GHC.Generics          (Generic)
 import System.Directory      (createDirectoryIfMissing, listDirectory)
 import System.FilePath.Posix (takeFileName)
@@ -77,6 +78,11 @@ data BlobRef = BlobRef !Int64 !Hash
 
 instance Serialise BlobRef
 
+newtype Mode = Mode Word32
+    deriving(Show, Eq, Generic)
+
+instance Serialise Mode
+
 -- | A block together with its hash.
 data HashedBlock = HashedBlock
     { blockDigest :: !Hash
@@ -89,9 +95,9 @@ zeroBlock = hash (Block B.empty)
 
 -- | A reference to a file in the store.
 data FileRef
-    = RegFile !BlobRef
+    = RegFile !Mode !BlobRef
     | SymLink !B8.ByteString -- target of the link.
-    | Dir !BlobRef
+    | Dir !Mode !BlobRef
     deriving(Show, Eq, Generic)
 
 instance Serialise FileRef
@@ -257,11 +263,12 @@ saveFile filename bytes =
 storeFile :: Store -> FilePath -> IO FileRef
 storeFile store filename = do
     status <- P.getSymbolicLinkStatus filename
+    let mode = Mode $ fromIntegral $ P.fileMode status
     if P.isRegularFile status then
         bracket
             (openBinaryFile filename ReadMode)
             hClose
-            (\h -> RegFile <$> saveBlob store h)
+            (\h -> RegFile mode <$> saveBlob store h)
     else if P.isSymbolicLink status then do
         target <- P.readSymbolicLink filename
         return (SymLink $ B8.pack target)
@@ -278,24 +285,27 @@ storeFile store filename = do
             .| mapC (LBS.toStrict . serialise)
             .| collectBlocks
             .| buildTree store
-        return $ Dir blobRef
+        return $ Dir mode blobRef
     else
         throwM $ userError "Unsupported file type."
 
 extractFile :: Store -> FileRef -> FilePath -> IO ()
 extractFile store ref path = case ref of
-    RegFile blobRef -> bracket
-        (openBinaryFile path WriteMode)
-        hClose
-        (\h -> runConduit $ loadBlob store blobRef .| mapM_C (B.hPut h))
+    RegFile (Mode mode) blobRef -> do
+        bracket
+            (openBinaryFile path WriteMode)
+            hClose
+            (\h -> runConduit $ loadBlob store blobRef .| mapM_C (B.hPut h))
+        P.setFileMode path (fromIntegral mode)
     SymLink target ->
         P.createSymbolicLink (B8.unpack target) path
-    Dir blobRef -> do
+    Dir (Mode mode) blobRef -> do
         createDirectoryIfMissing False path
         runConduit $
             loadBlob store blobRef
             .| decodeStreaming
             .| mapM_C (extractDirEnt path)
+        P.setFileMode path (fromIntegral mode)
   where
     extractDirEnt dirPath ent = extractFile store
         (entRef ent)
