@@ -94,8 +94,7 @@ data FileRef
 instance Serialise FileRef
 
 -- | A directory entry. The 'Dir' variant of 'FileRef' points to a blob whose
--- contents are a sequence of these. TODO: define wire format (probably CBOR
--- using binary-serialise-cbor).
+-- contents are a sequence of these.
 data DirEnt = DirEnt
     { entName :: !B8.ByteString -- file name
     , entRef  :: !FileRef
