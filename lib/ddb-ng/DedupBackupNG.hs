@@ -259,11 +259,12 @@ storeFile store filename = do
     else
         throwM $ userError "Unsupported file type."
 
-extractFile :: MonadFileSystem m => Store -> BlobRef -> FilePath -> m ()
-extractFile store ref path = bracket
-    (openBinaryFile path WriteMode)
-    hClose
-    (\h -> runConduit $ loadBlob store ref .| mapM_C (hPutBS h))
+extractFile :: MonadFileSystem m => Store -> FileRef -> FilePath -> m ()
+extractFile store ref path = case ref of
+    RegFile blobRef -> bracket
+        (openBinaryFile path WriteMode)
+        hClose
+        (\h -> runConduit $ loadBlob store blobRef .| mapM_C (hPutBS h))
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@. It returns a refernce to the Store.

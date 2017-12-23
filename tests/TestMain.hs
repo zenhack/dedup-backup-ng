@@ -29,7 +29,7 @@ saveRestoreBlob path blob = do
         newPath = path ++ "/new"
     writeFileBS oldPath blob
     store <- initStore (path ++ "/store")
-    RegFile ref <- storeFile store oldPath
+    ref <- storeFile store oldPath
     extractFile store ref newPath
     old <- readFileBS oldPath
     new <- readFileBS newPath
