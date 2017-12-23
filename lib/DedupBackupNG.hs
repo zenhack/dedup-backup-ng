@@ -28,11 +28,13 @@
 {-# LANGUAGE DeriveGeneric   #-}
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE Rank2Types      #-}
+{-# LANGUAGE RecordWildCards #-}
 module DedupBackupNG where
 
 import qualified Crypto.Hash.SHA256 as SHA256
 
 import Conduit
+
 
 import Codec.Serialise
     (IDecode(..), Serialise, deserialiseIncremental, serialise)
@@ -42,11 +44,13 @@ import Control.Monad.ST      (stToIO)
 import Data.Int              (Int64)
 import Data.Monoid           ((<>))
 import Data.Word             (Word32)
+import Foreign.C.Types       (CTime(..))
 import GHC.Generics          (Generic)
 import System.Directory      (createDirectoryIfMissing, listDirectory)
 import System.FilePath.Posix (takeFileName)
 import System.IO             (Handle, IOMode(..), hClose, openBinaryFile)
 import System.IO.Error       (isAlreadyExistsError)
+import System.Posix.Types    (CGid(..), CMode(..), CUid(..))
 import Text.Printf           (printf)
 
 import qualified Data.ByteString         as B
@@ -78,11 +82,6 @@ data BlobRef = BlobRef !Int64 !Hash
 
 instance Serialise BlobRef
 
-newtype Mode = Mode Word32
-    deriving(Show, Eq, Generic)
-
-instance Serialise Mode
-
 -- | A block together with its hash.
 data HashedBlock = HashedBlock
     { blockDigest :: !Hash
@@ -95,19 +94,36 @@ zeroBlock = hash (Block B.empty)
 
 -- | A reference to a file in the store.
 data FileRef
-    = RegFile !Mode !BlobRef
+    = RegFile !Metadata !BlobRef
     | SymLink !B8.ByteString -- target of the link.
-    | Dir !Mode !BlobRef
+    | Dir !Metadata !BlobRef
     deriving(Show, Eq, Generic)
 
 instance Serialise FileRef
+
+data Metadata = Metadata
+    { metaMode       :: !Word32
+    , metaModTime    :: !Int64
+    , metaAccessTime :: !Int64
+    , metaOwner      :: !Word32
+    , metaGroup      :: !Word32
+    } deriving(Show, Eq, Generic)
+
+status2Meta :: P.FileStatus -> Metadata
+status2Meta status = Metadata{..} where
+    CMode metaMode = P.fileMode status
+    CTime metaModTime = P.modificationTime status
+    CTime metaAccessTime = P.accessTime status
+    CUid metaOwner = P.fileOwner status
+    CGid metaGroup = P.fileGroup status
+
+instance Serialise Metadata
 
 -- | A directory entry. The 'Dir' variant of 'FileRef' points to a blob whose
 -- contents are a sequence of these.
 data DirEnt = DirEnt
     { entName :: !B8.ByteString -- file name
     , entRef  :: !FileRef
-    -- TODO: file metadata (ownership, timestamps, perms, etc).
     } deriving(Show, Eq, Generic)
 
 instance Serialise DirEnt
@@ -263,12 +279,12 @@ saveFile filename bytes =
 storeFile :: Store -> FilePath -> IO FileRef
 storeFile store filename = do
     status <- P.getSymbolicLinkStatus filename
-    let mode = Mode $ fromIntegral $ P.fileMode status
+    let meta = status2Meta status
     if P.isRegularFile status then
         bracket
             (openBinaryFile filename ReadMode)
             hClose
-            (\h -> RegFile mode <$> saveBlob store h)
+            (\h -> RegFile meta <$> saveBlob store h)
     else if P.isSymbolicLink status then do
         target <- P.readSymbolicLink filename
         return (SymLink $ B8.pack target)
@@ -285,31 +301,39 @@ storeFile store filename = do
             .| mapC (LBS.toStrict . serialise)
             .| collectBlocks
             .| buildTree store
-        return $ Dir mode blobRef
+        return $ Dir meta blobRef
     else
         throwM $ userError "Unsupported file type."
 
 extractFile :: Store -> FileRef -> FilePath -> IO ()
 extractFile store ref path = case ref of
-    RegFile (Mode mode) blobRef -> do
+    RegFile meta blobRef -> do
         bracket
             (openBinaryFile path WriteMode)
             hClose
             (\h -> runConduit $ loadBlob store blobRef .| mapM_C (B.hPut h))
-        P.setFileMode path (fromIntegral mode)
+        setMeta meta path
     SymLink target ->
         P.createSymbolicLink (B8.unpack target) path
-    Dir (Mode mode) blobRef -> do
+    Dir meta blobRef -> do
         createDirectoryIfMissing False path
         runConduit $
             loadBlob store blobRef
             .| decodeStreaming
             .| mapM_C (extractDirEnt path)
-        P.setFileMode path (fromIntegral mode)
+        setMeta meta path
   where
     extractDirEnt dirPath ent = extractFile store
         (entRef ent)
         (dirPath ++ "/" ++ B8.unpack (entName ent))
+
+
+setMeta :: Metadata -> FilePath -> IO ()
+setMeta Metadata{..} path = do
+    P.setFileMode path (CMode metaMode)
+    P.setFileTimes path
+        (CTime metaAccessTime)
+        (CTime metaModTime)
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@. It returns a refernce to the Store.
