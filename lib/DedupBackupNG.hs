@@ -37,7 +37,7 @@ import Conduit
 
 
 import Codec.Serialise
-    (IDecode(..), Serialise, deserialiseIncremental, serialise)
+    (IDecode(..), Serialise, deserialise, deserialiseIncremental, serialise)
 import Control.Monad         (forM_, unless, when)
 import Control.Monad.Catch   (bracket, catch, throwM)
 import Control.Monad.ST      (stToIO)
@@ -305,6 +305,19 @@ storeFile store filename = do
     else
         throwM $ userError "Unsupported file type."
 
+tagPath :: Store -> String -> FilePath
+tagPath (Store storePath) tagname = storePath ++ "/tags/" ++ tagname
+
+makeSnapshot :: Store -> FilePath -> String -> IO ()
+makeSnapshot store path tagname = do
+    ref <- storeFile store path
+    LBS.writeFile (tagPath store tagname) (serialise ref)
+
+restoreSnapshot :: Store -> String -> FilePath -> IO ()
+restoreSnapshot store tagname path = do
+    refBytes <- LBS.readFile $ tagPath store tagname
+    extractFile store (deserialise refBytes) path
+
 extractFile :: Store -> FileRef -> FilePath -> IO ()
 extractFile store ref path = case ref of
     RegFile meta blobRef -> do
@@ -341,6 +354,7 @@ initStore :: FilePath -> IO Store
 initStore dir = do
     forM_ [0,1..0xff] $ \n -> do
         createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
+    createDirectoryIfMissing True $ dir ++ "/tags"
     let store = Store dir
     saveBlock store zeroBlock
     return store
