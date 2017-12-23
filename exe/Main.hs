@@ -1,6 +1,11 @@
 module Main (main) where
 
-import DedupBackupNG ()
+import Cli
+import System.Environment (getArgs)
 
 main :: IO ()
-main = return ()
+main = do
+    args <- getArgs
+    case args of
+        [storePath, "tags"] -> runCommand storePath Tags
+        _                   -> putStrLn "Unknown command"
