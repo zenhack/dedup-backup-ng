@@ -3,12 +3,14 @@ module Cli where
 import DedupBackupNG
 import Options.Applicative
 
+import Control.Monad    (void)
 import Data.Monoid      (mempty, (<>))
 import System.Directory (listDirectory)
 
 data Command
     = Tags
-    | Save FilePath
+    | Save FilePath String
+    | Init
     deriving(Show, Read, Eq)
 
 cmdParser :: Parser (FilePath, Command)
@@ -19,15 +21,40 @@ cmdParser = (,)
         <> metavar "STORE"
         <> help "path to the store"
         )
-    <*> hsubparser
-        ( command "tags"
-            (info (pure Tags) (progDesc "List tags of snapshots in the store"))
+    <*> ( hsubparser $
+            (command "init"
+                (info
+                    (pure Init)
+                    (progDesc "Intialize the store")))
+        <> (command "tags"
+                (info
+                    (pure Tags)
+                    (progDesc "List tags of snapshots in the store")))
+        <> (command "save"
+                (info
+                    (Save
+                        <$> strOption
+                        ( long "target" -- TODO: not a fan of this name.
+                                        -- maybe this should just be positional?
+                        <> metavar "TARGET"
+                        <> help "The file or directory to back up."
+                        )
+                        <*> strOption
+                        ( short 't'
+                        <> long "tag"
+                        <> metavar "TAG"
+                        <> help "The tag to reference the snapshot by."
+                        ))
+                    (progDesc "Save a snapshot.")))
         )
 
 runCommand :: FilePath -> Command -> IO ()
 runCommand storePath Tags = do
     contents <- listDirectory (storePath ++ "/tags")
     mapM_ putStrLn contents
+runCommand storePath Init = void $ initStore storePath
+runCommand storePath (Save target tagname) =
+    makeSnapshot (Store storePath) target tagname
 
 main :: IO ()
 main = do
