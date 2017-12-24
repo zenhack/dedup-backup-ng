@@ -10,6 +10,7 @@ import System.Directory (listDirectory)
 data Command
     = Tags
     | Save FilePath String
+    | Restore FilePath String
     | Init
     deriving(Show, Read, Eq)
 
@@ -46,6 +47,21 @@ cmdParser = (,)
                         <> help "The tag to reference the snapshot by."
                         ))
                     (progDesc "Save a snapshot.")))
+        <> (command "restore"
+                (info
+                    (Restore
+                        <$> strOption
+                        ( long "target"
+                        <> metavar "TARGET"
+                        <> help "The location to extract to."
+                        )
+                        <*> strOption
+                        ( short 't'
+                        <> long "tag"
+                        <> metavar "TAG"
+                        <> help "The tag for the snapshot to restore."
+                        ))
+                    (progDesc "Restore a snapshot.")))
         )
 
 runCommand :: FilePath -> Command -> IO ()
@@ -55,6 +71,8 @@ runCommand storePath Tags = do
 runCommand storePath Init = void $ initStore storePath
 runCommand storePath (Save target tagname) =
     makeSnapshot (Store storePath) target tagname
+runCommand storePath (Restore target tagname) =
+    restoreSnapshot (Store storePath) tagname target
 
 main :: IO ()
 main = do
