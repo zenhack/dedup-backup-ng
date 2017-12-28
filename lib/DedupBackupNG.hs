@@ -130,7 +130,7 @@ instance Serialise DirEnt
 
 -- | The maximum block size to store.
 blockSize :: Integral a => a
-blockSize = 4096
+blockSize = 2 * 1024 * 1024
 
 -- | The size of a hash in bytes.
 hashSize :: Integral a => a
