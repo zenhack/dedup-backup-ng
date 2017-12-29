@@ -76,5 +76,5 @@ runCommand storePath (Restore target tagname) =
 
 main :: IO ()
 main = do
-    (storePath, cmd) <- execParser $ info cmdParser mempty
+    (storePath, cmd) <- execParser $ info (helper <*> cmdParser) mempty
     runCommand storePath cmd
