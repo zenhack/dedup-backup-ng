@@ -71,9 +71,19 @@ newtype Hash = Hash B.ByteString
 
 instance Serialise Hash
 
--- | Info about a storage location.
-newtype Store = Store FilePath
-    deriving(Show, Eq)
+-- A storage backend.
+data Store = Store
+    -- | @'saveBlock' block@ Saves @block@ to the store. If the block
+    -- is already present, this is a no-op.
+    { saveBlock :: HashedBlock -> IO ()
+    -- @'loadBlock' digest@ returns the block corresponding to the
+    -- given sha256 hash from the store.
+    , loadBlock :: Hash -> IO Block
+    -- | @'loadTag' tagname@ loads the FileRef for the given tag.
+    , loadTag   :: String -> IO FileRef
+    -- | @'saveTag' tagname ref@ saves @ref@ under the given tag.
+    , saveTag   :: String -> FileRef -> IO ()
+    }
 
 -- | A reference to a blob. This includes all information necessary to read the
 -- blob, not counting the location of the store.
@@ -156,23 +166,25 @@ decodeStreaming = decodeIO >>= go
     -- An actual failure:
     go (Fail _ _ exn) = throwM exn
 
--- | @'blockPath' store digest@ is the file name in which the block with
--- sha256 hash @digest@ should be saved within the given store.
-blockPath :: Store -> Hash -> FilePath
-blockPath (Store storePath) (Hash digest) =
-    let hashname@(c1:c2:_) = B8.unpack $ Base16.encode digest
-    in storePath ++ "/sha256/" ++ [c1,c2] ++ "/" ++ hashname
+simpleStore :: FilePath -> Store
+simpleStore storePath = Store{..} where
+    saveBlock (HashedBlock digest (Block bytes)) =
+        saveFile (blockPath digest) bytes
 
--- | @'saveBlock' store block@ Saves @block@ to the store. If the block
--- is already present, this is a no-op.
-saveBlock :: Store -> HashedBlock -> IO ()
-saveBlock store (HashedBlock digest (Block bytes)) =
-    saveFile (blockPath store digest) bytes
+    loadBlock digest = Block <$> B.readFile (blockPath digest)
 
--- @'loadBlock@ store digest@ returns the block corresponding to the
--- given sha256 hash from @store@.
-loadBlock :: Store -> Hash -> IO Block
-loadBlock store digest = Block <$> B.readFile (blockPath store digest)
+    saveTag tagname ref = LBS.writeFile (tagPath tagname) (serialise ref)
+    loadTag tagname = deserialise <$> LBS.readFile (tagPath tagname)
+
+    -- | @'blockPath' digest@ is the file name in which the block with
+    -- sha256 hash @digest@ should be saved within the store.
+    blockPath :: Hash -> FilePath
+    blockPath (Hash digest) =
+        let hashname@(c1:c2:_) = B8.unpack $ Base16.encode digest
+        in storePath ++ "/sha256/" ++ [c1,c2] ++ "/" ++ hashname
+
+    tagPath :: String -> FilePath
+    tagPath tagname = storePath ++ "/tags/" ++ tagname
 
 -- | Read bytestrings from the handle in chunks of size 'blockSize'.
 --
@@ -305,18 +317,15 @@ storeFile store filename = do
     else
         throwM $ userError "Unsupported file type."
 
-tagPath :: Store -> String -> FilePath
-tagPath (Store storePath) tagname = storePath ++ "/tags/" ++ tagname
-
 makeSnapshot :: Store -> FilePath -> String -> IO ()
 makeSnapshot store path tagname = do
     ref <- storeFile store path
-    LBS.writeFile (tagPath store tagname) (serialise ref)
+    saveTag store tagname ref
 
 restoreSnapshot :: Store -> String -> FilePath -> IO ()
 restoreSnapshot store tagname path = do
-    refBytes <- LBS.readFile $ tagPath store tagname
-    extractFile store (deserialise refBytes) path
+    ref <- loadTag store tagname
+    extractFile store ref path
 
 extractFile :: Store -> FileRef -> FilePath -> IO ()
 extractFile store ref path = case ref of
@@ -355,6 +364,6 @@ initStore dir = do
     forM_ [0,1..0xff] $ \n -> do
         createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
     createDirectoryIfMissing True $ dir ++ "/tags"
-    let store = Store dir
+    let store = simpleStore dir
     saveBlock store zeroBlock
     return store

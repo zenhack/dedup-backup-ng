@@ -70,9 +70,9 @@ runCommand storePath Tags = do
     mapM_ putStrLn contents
 runCommand storePath Init = void $ initStore storePath
 runCommand storePath (Save target tagname) =
-    makeSnapshot (Store storePath) target tagname
+    makeSnapshot (simpleStore storePath) target tagname
 runCommand storePath (Restore target tagname) =
-    restoreSnapshot (Store storePath) tagname target
+    restoreSnapshot (simpleStore storePath) tagname target
 
 main :: IO ()
 main = do
