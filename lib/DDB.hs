@@ -29,95 +29,35 @@
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE Rank2Types      #-}
 {-# LANGUAGE RecordWildCards #-}
-module DedupBackupNG where
+module DDB where
 
 import qualified Crypto.Hash.SHA256 as SHA256
 
 import Conduit
-
+import DDB.Types
 
 import Codec.Serialise
-    (IDecode(..), Serialise, deserialise, deserialiseIncremental, serialise)
-import Control.Monad         (forM_, unless, when)
-import Control.Monad.Catch   (bracket, catch, throwM)
+    (IDecode(..), Serialise, deserialiseIncremental, serialise)
+import Control.Monad         (forM_, when)
+import Control.Monad.Catch   (bracket, throwM)
 import Control.Monad.ST      (stToIO)
-import Data.Int              (Int64)
 import Data.Monoid           ((<>))
-import Data.Word             (Word32)
 import Foreign.C.Types       (CTime(..))
-import GHC.Generics          (Generic)
 import System.Directory      (createDirectoryIfMissing, listDirectory)
 import System.FilePath.Posix (takeFileName)
 import System.IO             (Handle, IOMode(..), hClose, openBinaryFile)
-import System.IO.Error       (isAlreadyExistsError)
 import System.Posix.Types    (CGid(..), CMode(..), CUid(..))
-import Text.Printf           (printf)
 
 import qualified Data.ByteString         as B
-import qualified Data.ByteString.Base16  as Base16
 import qualified Data.ByteString.Builder as Builder
 import qualified Data.ByteString.Char8   as B8
 import qualified Data.ByteString.Lazy    as LBS
 import qualified System.Posix.Files      as P
-import qualified System.Posix.IO         as P
 
--- | newtype wrapper around a disk/storage block.
-newtype Block = Block B.ByteString
-    deriving(Show, Eq, Generic)
-
--- | Wrapper around sha256 digests.
-newtype Hash = Hash B.ByteString
-    deriving(Show, Eq, Generic)
-
-instance Serialise Hash
-
--- A storage backend.
-data Store = Store
-    -- | @'saveBlock' block@ Saves @block@ to the store. If the block
-    -- is already present, this is a no-op.
-    { saveBlock :: HashedBlock -> IO ()
-    -- @'loadBlock' digest@ returns the block corresponding to the
-    -- given sha256 hash from the store.
-    , loadBlock :: Hash -> IO Block
-    -- | @'loadTag' tagname@ loads the FileRef for the given tag.
-    , loadTag   :: String -> IO FileRef
-    -- | @'saveTag' tagname ref@ saves @ref@ under the given tag.
-    , saveTag   :: String -> FileRef -> IO ()
-    }
-
--- | A reference to a blob. This includes all information necessary to read the
--- blob, not counting the location of the store.
-data BlobRef = BlobRef !Int64 !Hash
-    deriving(Show, Eq, Generic)
-
-instance Serialise BlobRef
-
--- | A block together with its hash.
-data HashedBlock = HashedBlock
-    { blockDigest :: !Hash
-    , blockBytes  :: !Block
-    }
 
 -- | A HashedBlock for the zero-length block.
 zeroBlock :: HashedBlock
 zeroBlock = hash (Block B.empty)
-
--- | A reference to a file in the store.
-data FileRef
-    = RegFile !Metadata !BlobRef
-    | SymLink !B8.ByteString -- target of the link.
-    | Dir !Metadata !BlobRef
-    deriving(Show, Eq, Generic)
-
-instance Serialise FileRef
-
-data Metadata = Metadata
-    { metaMode       :: !Word32
-    , metaModTime    :: !Int64
-    , metaAccessTime :: !Int64
-    , metaOwner      :: !Word32
-    , metaGroup      :: !Word32
-    } deriving(Show, Eq, Generic)
 
 status2Meta :: P.FileStatus -> Metadata
 status2Meta status = Metadata{..} where
@@ -126,17 +66,6 @@ status2Meta status = Metadata{..} where
     CTime metaAccessTime = P.accessTime status
     CUid metaOwner = P.fileOwner status
     CGid metaGroup = P.fileGroup status
-
-instance Serialise Metadata
-
--- | A directory entry. The 'Dir' variant of 'FileRef' points to a blob whose
--- contents are a sequence of these.
-data DirEnt = DirEnt
-    { entName :: !B8.ByteString -- file name
-    , entRef  :: !FileRef
-    } deriving(Show, Eq, Generic)
-
-instance Serialise DirEnt
 
 -- | The maximum block size to store.
 blockSize :: Integral a => a
@@ -165,26 +94,6 @@ decodeStreaming = decodeIO >>= go
     go (Fail rest 0 _) | B.null rest = return ()
     -- An actual failure:
     go (Fail _ _ exn) = throwM exn
-
-simpleStore :: FilePath -> Store
-simpleStore storePath = Store{..} where
-    saveBlock (HashedBlock digest (Block bytes)) =
-        saveFile (blockPath digest) bytes
-
-    loadBlock digest = Block <$> B.readFile (blockPath digest)
-
-    saveTag tagname ref = LBS.writeFile (tagPath tagname) (serialise ref)
-    loadTag tagname = deserialise <$> LBS.readFile (tagPath tagname)
-
-    -- | @'blockPath' digest@ is the file name in which the block with
-    -- sha256 hash @digest@ should be saved within the store.
-    blockPath :: Hash -> FilePath
-    blockPath (Hash digest) =
-        let hashname@(c1:c2:_) = B8.unpack $ Base16.encode digest
-        in storePath ++ "/sha256/" ++ [c1,c2] ++ "/" ++ hashname
-
-    tagPath :: String -> FilePath
-    tagPath tagname = storePath ++ "/tags/" ++ tagname
 
 -- | Read bytestrings from the handle in chunks of size 'blockSize'.
 --
@@ -270,24 +179,6 @@ buildNodes
     .| collectBlocks
     .| mapC hash
 
--- Save the provided ByteString to the named file, if the file does
--- not already exist. If it does exist, this is a no-op.
-saveFile :: FilePath -> B.ByteString -> IO ()
-saveFile filename bytes =
-    bracket
-        createExclusive
-        hClose
-        (\h -> B.hPut h bytes)
-    `catch`
-        (\e -> unless (isAlreadyExistsError e) $ throwM e)
-  where
-    createExclusive = P.fdToHandle =<< P.openFd
-            filename
-            P.WriteOnly
-            (Just 0o600)
-            P.defaultFileFlags { P.exclusive = True }
-
-
 storeFile :: Store -> FilePath -> IO FileRef
 storeFile store filename = do
     status <- P.getSymbolicLinkStatus filename
@@ -349,21 +240,9 @@ extractFile store ref path = case ref of
         (entRef ent)
         (dirPath ++ "/" ++ B8.unpack (entName ent))
 
-
 setMeta :: Metadata -> FilePath -> IO ()
 setMeta Metadata{..} path = do
     P.setFileMode path (CMode metaMode)
     P.setFileTimes path
         (CTime metaAccessTime)
         (CTime metaModTime)
-
--- | @'initStore' dir@ creates the directory structure necessary for
--- storage in the directory @dir@. It returns a refernce to the Store.
-initStore :: FilePath -> IO Store
-initStore dir = do
-    forM_ [0,1..0xff] $ \n -> do
-        createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
-    createDirectoryIfMissing True $ dir ++ "/tags"
-    let store = simpleStore dir
-    saveBlock store zeroBlock
-    return store

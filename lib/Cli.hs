@@ -1,6 +1,7 @@
 module Cli where
 
-import DedupBackupNG
+import DDB
+import DDB.SimpleStore
 import Options.Applicative
 
 import Control.Monad    (void)

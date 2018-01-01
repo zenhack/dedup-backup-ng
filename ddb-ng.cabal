@@ -17,8 +17,10 @@ cabal-version:       >=1.10
 
 library ddb-ng-lib
   exposed-modules:
-    DedupBackupNG,
-    Cli
+      DDB
+    , Cli
+    , DDB.Types
+    , DDB.SimpleStore
   build-depends:
       base >=4.10 && <4.11
     , cryptohash-sha256 >=0.11 && <0.12
