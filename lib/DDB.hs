@@ -110,11 +110,11 @@ hBlocks handle = do
 -- to the store.
 --
 -- Returns a BlobRef referencing the blob.
-saveBlob :: Store -> Handle -> IO BlobRef
+saveBlob :: Store s => s -> Handle -> IO BlobRef
 saveBlob store h = runConduit $ hBlocks h .| buildTree store
 
 -- Load a blob from disk.
-loadBlob :: Store -> BlobRef -> Producer IO B.ByteString
+loadBlob :: Store s => s -> BlobRef -> Producer IO B.ByteString
 loadBlob store (BlobRef 1 digest) = do
     Block bytes <- lift $ loadBlock store digest
     yield bytes
@@ -146,12 +146,12 @@ collectBlocks = go 0 mempty where
     yieldBlock = yield . Block . LBS.toStrict . Builder.toLazyByteString
 
 -- | Save all blocks in the stream to the store, and pass them along.
-saveBlocks :: Store -> ConduitM HashedBlock HashedBlock IO ()
+saveBlocks :: Store s => s -> ConduitM HashedBlock HashedBlock IO ()
 saveBlocks store = iterMC (saveBlock store)
 
 -- | 'buildTree' builds the tree for a blob consisting of the incoming (leaf)
 -- blocks. Returns a BlobRef to the root of the tree.
-buildTree :: Store -> Consumer Block IO BlobRef
+buildTree :: Store s => s -> Consumer Block IO BlobRef
 buildTree store = mapC hash .| saveBlocks store .| go 1
   where
     go n = do
@@ -179,7 +179,7 @@ buildNodes
     .| collectBlocks
     .| mapC hash
 
-storeFile :: Store -> FilePath -> IO FileRef
+storeFile :: Store s => s -> FilePath -> IO FileRef
 storeFile store filename = do
     status <- P.getSymbolicLinkStatus filename
     let meta = status2Meta status
@@ -208,17 +208,17 @@ storeFile store filename = do
     else
         throwM $ userError "Unsupported file type."
 
-makeSnapshot :: Store -> FilePath -> String -> IO ()
+makeSnapshot :: Store s => s -> FilePath -> String -> IO ()
 makeSnapshot store path tagname = do
     ref <- storeFile store path
     saveTag store tagname ref
 
-restoreSnapshot :: Store -> String -> FilePath -> IO ()
+restoreSnapshot :: Store s => s -> String -> FilePath -> IO ()
 restoreSnapshot store tagname path = do
     ref <- loadTag store tagname
     extractFile store ref path
 
-extractFile :: Store -> FileRef -> FilePath -> IO ()
+extractFile :: Store s => s -> FileRef -> FilePath -> IO ()
 extractFile store ref path = case ref of
     RegFile meta blobRef -> do
         bracket

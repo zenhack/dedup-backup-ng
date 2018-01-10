@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards #-}
-module DDB.SimpleStore (simpleStore, initStore) where
+module DDB.SimpleStore (SimpleStore, simpleStore, initStore) where
 
 import DDB
 import DDB.Types
@@ -18,34 +18,39 @@ import qualified Data.ByteString.Char8  as B8
 import qualified Data.ByteString.Lazy   as LBS
 import qualified System.Posix.IO        as P
 
-simpleStore :: FilePath -> Store
-simpleStore storePath = Store{..} where
-    saveBlock (HashedBlock digest (Block bytes)) =
-        saveFile (blockPath digest) bytes
+simpleStore :: FilePath -> SimpleStore
+simpleStore = simpleStore
 
-    loadBlock digest = Block <$> B.readFile (blockPath digest)
+data SimpleStore = SimpleStore FilePath
 
-    saveTag tagname ref = LBS.writeFile (tagPath tagname) (serialise ref)
-    loadTag tagname = deserialise <$> LBS.readFile (tagPath tagname)
+instance Store SimpleStore  where
+    saveBlock (SimpleStore storePath) (HashedBlock digest (Block bytes)) =
+        saveFile (blockPath storePath digest) bytes
+    loadBlock (SimpleStore storePath) digest =
+        Block <$> B.readFile (blockPath storePath digest)
+    saveTag (SimpleStore storePath) tagname ref =
+        LBS.writeFile (tagPath storePath tagname) (serialise ref)
+    loadTag (SimpleStore storePath) tagname =
+        deserialise <$> LBS.readFile (tagPath storePath tagname)
 
-    -- | @'blockPath' digest@ is the file name in which the block with
-    -- sha256 hash @digest@ should be saved within the store.
-    blockPath :: Hash -> FilePath
-    blockPath (Hash digest) =
-        let hashname@(c1:c2:_) = B8.unpack $ Base16.encode digest
-        in storePath ++ "/sha256/" ++ [c1,c2] ++ "/" ++ hashname
+-- | @'blockPath' storePath digest@ is the file name in which the block with
+-- sha256 hash @digest@ should be saved within the store.
+blockPath :: FilePath -> Hash -> FilePath
+blockPath storePath (Hash digest) =
+    let hashname@(c1:c2:_) = B8.unpack $ Base16.encode digest
+    in storePath ++ "/sha256/" ++ [c1,c2] ++ "/" ++ hashname
 
-    tagPath :: String -> FilePath
-    tagPath tagname = storePath ++ "/tags/" ++ tagname
+tagPath :: FilePath -> String -> FilePath
+tagPath storePath tagname = storePath ++ "/tags/" ++ tagname
 
 -- | @'initStore' dir@ creates the directory structure necessary for
 -- storage in the directory @dir@. It returns a refernce to the Store.
-initStore :: FilePath -> IO Store
+initStore :: FilePath -> IO SimpleStore
 initStore dir = do
     forM_ [0,1..0xff] $ \n -> do
         createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
     createDirectoryIfMissing True $ dir ++ "/tags"
-    let store = simpleStore dir
+    let store = SimpleStore dir
     saveBlock store zeroBlock
     return store
 

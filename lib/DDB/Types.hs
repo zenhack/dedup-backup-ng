@@ -9,18 +9,17 @@ import GHC.Generics    (Generic)
 import qualified Data.ByteString as B
 
 -- | A storage backend.
-data Store = Store
-    -- | @'saveBlock' block@ Saves @block@ to the store. If the block
+class Store s where
+    -- | @'saveBlock' store block@ Saves @block@ to the store. If the block
     -- is already present, this is a no-op.
-    { saveBlock :: HashedBlock -> IO ()
-    -- @'loadBlock' digest@ returns the block corresponding to the
+    saveBlock :: s -> HashedBlock -> IO ()
+    -- @'loadBlock' store digest@ returns the block corresponding to the
     -- given sha256 hash from the store.
-    , loadBlock :: Hash -> IO Block
-    -- | @'loadTag' tagname@ loads the FileRef for the given tag.
-    , loadTag   :: String -> IO FileRef
-    -- | @'saveTag' tagname ref@ saves @ref@ under the given tag.
-    , saveTag   :: String -> FileRef -> IO ()
-    }
+    loadBlock :: s -> Hash -> IO Block
+    -- | @'loadTag' store tagname@ loads the FileRef for the given tag.
+    loadTag   :: s -> String -> IO FileRef
+    -- | @'saveTag' store tagname ref@ saves @ref@ under the given tag.
+    saveTag   :: s -> String -> FileRef -> IO ()
 
 -- | newtype wrapper around a disk/storage block.
 newtype Block = Block B.ByteString

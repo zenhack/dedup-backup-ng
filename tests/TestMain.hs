@@ -1,6 +1,7 @@
 module Main where
 
-import DedupBackupNG
+import DDB
+import DDB.SimpleStore
 
 import Control.Monad                        (replicateM)
 import System.Unix.Directory                (withTemporaryDirectory)
