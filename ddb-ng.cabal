@@ -21,10 +21,13 @@ library ddb-ng-lib
     , Cli
     , DDB.Types
     , DDB.SimpleStore
+    , DDB.NewStore
   build-depends:
       base >=4.10 && <4.11
     , cryptohash-sha256 >=0.11 && <0.12
     , conduit-combinators >=1.1 && <1.2
+    , hashable >= 1.2.6 && <1.3
+    , unordered-containers >= 0.2.8 && <0.3
     , directory >=1.3 && <1.4
     , bytestring >=0.10 && <0.11
     , base16-bytestring >=0.1 && <0.2

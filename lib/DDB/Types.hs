@@ -1,7 +1,9 @@
-{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module DDB.Types where
 
 import Codec.Serialise (Serialise)
+import Data.Hashable   (Hashable)
 import Data.Int        (Int64)
 import Data.Word       (Word32)
 import GHC.Generics    (Generic)
@@ -27,7 +29,7 @@ newtype Block = Block B.ByteString
 
 -- | Wrapper around sha256 digests.
 newtype Hash = Hash B.ByteString
-    deriving(Show, Eq, Generic)
+    deriving(Show, Eq, Generic, Hashable)
 
 instance Serialise Hash
 

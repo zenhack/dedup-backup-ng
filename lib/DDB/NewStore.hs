@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric   #-}
 {-# LANGUAGE RecordWildCards #-}
 module DDB.NewStore where
 -- an attempt at a more efficient Store implementation.
@@ -17,12 +18,27 @@ module DDB.NewStore where
 --
 -- TODO: come up with a better name than NewStore.
 
-import Control.Monad (unless)
-import Data.Word     (Word64)
-import System.IO     (Handle, ReadWriteMode, SeekFromEnd, hSeek)
+import DDB.Types
 
-import qualified Data.ByteString     as B
-import qualified Data.HashMap.Strict as M
+import Codec.Serialise    (Serialise, deserialise, serialise)
+import Control.Exception  (catch)
+import Control.Monad      (unless)
+import Data.IORef         (IORef, newIORef, readIORef, writeIORef)
+import Data.Word          (Word64)
+import GHC.Generics       (Generic)
+import System.IO
+    ( Handle
+    , IOMode(ReadWriteMode)
+    , SeekMode(AbsoluteSeek, SeekFromEnd)
+    , hClose
+    , hSeek
+    , openBinaryFile
+    )
+import System.Posix.Files (rename)
+
+import qualified Data.ByteString      as B
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.HashMap.Strict  as M
 
 data MetaData = MetaData
     { offset :: Word64
@@ -30,9 +46,12 @@ data MetaData = MetaData
     -- fail in the middle of a run, nothing is changed; we have some garbage at
     -- the end of the blob file, but we just truncate to the appropriate
     -- position on the next run.
-    , index  :: M.Map B.ByteString (Word64, Word64)
+    , index  :: M.HashMap Hash (Word64, Word64)
     -- ^ Index mapping hashes to ranges in the blob file.
     }
+    deriving(Show, Eq, Generic)
+
+instance Serialise MetaData
 
 data NewStore = NewStore
     { handle    :: Handle
@@ -45,17 +64,20 @@ data NewStore = NewStore
     }
 
 instance Store NewStore where
-    saveBlock s@NewStore{..} (HashedBlock digest bytes) = do
+    saveBlock NewStore{..} (HashedBlock digest (Block bytes)) = do
         m@MetaData{..} <- readIORef metadata
-        unless (index `M.contains` digest) $ do
+        unless (digest `M.member` index) $ do
             B.hPut handle bytes
             writeIORef metadata $
-                m { offset = offset + B.length bytes
-                  , index = M.insert digest (offset, B.length bytes)
+                m { offset = offset + fromIntegral (B.length bytes)
+                  , index = M.insert
+                        digest
+                        (offset, fromIntegral $ B.length bytes)
+                        index
                   }
 
-    loadBlock s@NewStore{..} (Hash digest) = do
-        m@MetaData{..} <- readIORef metadata
+    loadBlock NewStore{..} digest = do
+        MetaData{..} <- readIORef metadata
         case M.lookup digest index of
             Nothing -> error "TODO: throw a proper exception"
             Just (blobOffset, blobSize) -> do
@@ -63,14 +85,18 @@ instance Store NewStore where
                 -- but the unix package doesn't wrap it; see:
                 --
                 -- https://github.com/haskell/unix/issues/105
-                hSeek handle AbsoluteSeek blobOffset
-                bytes <- hGet handle blobSize
-                hSeek handle AbsoluteSeek offset
-                return bytes
+                hSeek handle AbsoluteSeek (fromIntegral blobOffset)
+                bytes <- B.hGet handle (fromIntegral blobSize)
+                hSeek handle AbsoluteSeek (fromIntegral offset)
+                return $ Block bytes
 
-    -- TODO: tags. We factor out the implementation from SimpleStore; there's
-    -- no reason not to re-use it.
+    saveTag NewStore{..} tagname ref =
+        LBS.writeFile (tagPath storePath tagname) (serialise ref)
+    loadTag NewStore{..} tagname =
+        deserialise <$> LBS.readFile (tagPath storePath tagname)
 
+tagPath :: FilePath -> String -> FilePath
+tagPath storePath tagname = storePath ++ "/tags/" ++ tagname
 
 indexPath, blobsPath :: FilePath -> FilePath
 indexPath = (++ "/index")
@@ -79,23 +105,32 @@ blobsPath = (++ "/blobs-sha256")
 openStore :: FilePath -> IO NewStore
 openStore storePath = do
     handle <- openBinaryFile (blobsPath storePath) ReadWriteMode
-    metadata <- newIORef <$> (deserialise <$> B.readFile (indexPath storePath))
-        -- TODO: check the type of error:
-        `catch` (\_ -> MetaData { offset = 0, index = M.empty })
+    metadata <- loadMetadata
     -- TODO: truncate to indicated size and seek there.
     hSeek handle SeekFromEnd 0
     return NewStore{..}
+  where
+    loadMetadata = do
+        value <- (deserialise <$> LBS.readFile (indexPath storePath))
+            -- TODO: check the type of error:
+            `catch`
+            ((\_ -> return MetaData
+                        { offset = 0
+                        , index = M.empty
+                        }) :: IOError -> IO MetaData)
+        newIORef value
 
--- | Close the store, flushing the index to disk.
+-- | Close the store, flushing the metadata to disk.
 closeStore :: NewStore -> IO ()
 closeStore NewStore{..} = do
+    m <- readIORef metadata
     hClose handle
-    atomicWriteFile (indexPath storePath) (serialise index)
+    atomicWriteFile (indexPath storePath) (serialise m)
 
 -- | @'atomicWriteFile path bytes@ writes @bytes@ to the file @path@,
 -- atomically. It does so by writing to a different file, then using
 -- 'rename' to move it.
-atomicWriteFile :: FilePath -> B.ByteString -> IO ()
+atomicWriteFile :: FilePath -> LBS.ByteString -> IO ()
 atomicWriteFile path bytes = do
-    B.writeFile (path ++ ".new") bytes
+    LBS.writeFile (path ++ ".new") bytes
     rename (path ++ ".new") path
