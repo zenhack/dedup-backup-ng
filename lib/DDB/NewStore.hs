@@ -42,7 +42,7 @@ import qualified Data.HashMap.Strict  as M
 
 data MetaData = MetaData
     { offset :: Word64
-    -- ^ The offset of the end of the data. This storing this means that if we
+    -- ^ The offset of the end of the data. Storing this means that if we
     -- fail in the middle of a run, nothing is changed; we have some garbage at
     -- the end of the blob file, but we just truncate to the appropriate
     -- position on the next run.
@@ -57,7 +57,7 @@ data NewStore = NewStore
     { handle    :: Handle
     -- ^ open handle to the blob file.
     , metadata  :: IORef MetaData
-    -- ^ metadata about the store. we keep this in memory until we close
+    -- ^ metadata about the store. We keep this in memory until we close
     -- the store, at which point we flush it to disk atomically.
     , storePath :: FilePath
     -- ^ The path to the directory containing the store.
