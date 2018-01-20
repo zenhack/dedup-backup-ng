@@ -1,13 +1,14 @@
 module Cli where
 
 import DDB
-import DDB.SimpleStore
+import DDB.NewStore
 import DDB.Types
 import Options.Applicative
 
-import Control.Monad    (void)
-import Data.Monoid      (mempty, (<>))
-import System.Directory (listDirectory)
+import Control.Exception (bracket)
+import Control.Monad     (void)
+import Data.Monoid       (mempty, (<>))
+import System.Directory  (listDirectory)
 
 data Command
     = Tags
@@ -66,15 +67,25 @@ cmdParser = (,)
                     (progDesc "Restore a snapshot.")))
         )
 
+-- TODO: regression: other than init, each of these should fail if the store
+-- does not already exist.
 runCommand :: FilePath -> Command -> IO ()
 runCommand storePath Tags = do
     contents <- listDirectory (storePath ++ "/tags")
     mapM_ putStrLn contents
-runCommand storePath Init = void $ (openStore storePath :: IO SimpleStore)
-runCommand storePath (Save target tagname) =
-    makeSnapshot (simpleStore storePath) target tagname
-runCommand storePath (Restore target tagname) =
-    restoreSnapshot (simpleStore storePath) tagname target
+runCommand storePath Init = withNewStore storePath (\_ -> pure ())
+runCommand storePath (Save target tagname) = withNewStore storePath $ \store ->
+    makeSnapshot store target tagname
+runCommand storePath (Restore target tagname) = withNewStore storePath $ \store ->
+    restoreSnapshot store tagname target
+
+withNewStore :: FilePath -> (NewStore -> IO a) -> IO a
+withNewStore path = bracket
+    (openNewStore path)
+    closeStore
+
+openNewStore :: FilePath -> IO NewStore
+openNewStore = openStore
 
 main :: IO ()
 main = do
