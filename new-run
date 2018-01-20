@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+#
+# Find the executable within dist-newstyle and run it. This is a workaround
+# until cabal implements new-run.
+exec $(find "$(dirname $0)/dist-newstyle/" -name ddb-ng -type f) $@
