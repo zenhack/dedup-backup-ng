@@ -21,11 +21,12 @@ module DDB.NewStore where
 import DDB.Types
 
 import Codec.Serialise    (Serialise, deserialise, serialise)
-import Control.Exception  (catch)
+import Control.Exception  (bracket, catch, throwIO)
 import Control.Monad      (unless)
 import Data.IORef         (IORef, newIORef, readIORef, writeIORef)
 import Data.Word          (Word64)
 import GHC.Generics       (Generic)
+import System.Directory   (createDirectoryIfMissing)
 import System.IO
     ( Handle
     , IOMode(ReadWriteMode)
@@ -34,7 +35,10 @@ import System.IO
     , hSeek
     , openBinaryFile
     )
+import System.IO.Error    (isAlreadyExistsError)
 import System.Posix.Files (rename)
+
+import qualified System.Posix.IO as P
 
 import qualified Data.ByteString      as B
 import qualified Data.ByteString.Lazy as LBS
@@ -101,6 +105,10 @@ instance Store NewStore where
         atomicWriteFile (metadataPath storePath) (serialise m)
 
     openStore storePath = do
+        createDirectoryIfMissing True $ storePath ++ "/tags"
+        -- make sure the store file exists:
+        bracket (P.createFile (blobsPath storePath) 0o600) P.closeFd (\_ -> pure ())
+            `catch` (\e -> unless (isAlreadyExistsError e) $ throwIO e)
         handle <- openBinaryFile (blobsPath storePath) ReadWriteMode
         metadata <- loadMetadata
         -- TODO: truncate to indicated size and seek there.
