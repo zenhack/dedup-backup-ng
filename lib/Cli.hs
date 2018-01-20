@@ -1,7 +1,7 @@
 module Cli where
 
 import DDB
-import DDB.NewStore
+import DDB.Store
 import DDB.Types
 import Options.Applicative
 
@@ -73,19 +73,17 @@ runCommand :: FilePath -> Command -> IO ()
 runCommand storePath Tags = do
     contents <- listDirectory (storePath ++ "/tags")
     mapM_ putStrLn contents
-runCommand storePath Init = withNewStore storePath (\_ -> pure ())
-runCommand storePath (Save target tagname) = withNewStore storePath $ \store ->
+runCommand storePath Init = withStore storePath (\_ -> pure ())
+runCommand storePath (Save target tagname) = withStore storePath $ \store ->
     makeSnapshot store target tagname
-runCommand storePath (Restore target tagname) = withNewStore storePath $ \store ->
+runCommand storePath (Restore target tagname) = withStore storePath $ \store ->
     restoreSnapshot store tagname target
 
-withNewStore :: FilePath -> (NewStore -> IO a) -> IO a
-withNewStore path = bracket
-    (openNewStore path)
+-- TODO: this doesn't belong here; put it in a different module.
+withStore :: FilePath -> (Store -> IO a) -> IO a
+withStore path = bracket
+    (openStore path)
     closeStore
-
-openNewStore :: FilePath -> IO NewStore
-openNewStore = openStore
 
 main :: IO ()
 main = do

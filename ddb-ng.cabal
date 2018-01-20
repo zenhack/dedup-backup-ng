@@ -20,7 +20,7 @@ library ddb-ng-lib
       DDB
     , Cli
     , DDB.Types
-    , DDB.NewStore
+    , DDB.Store
   build-depends:
       base >=4.10 && <4.11
     , cryptohash-sha256 >=0.11 && <0.12

@@ -10,23 +10,6 @@ import GHC.Generics    (Generic)
 
 import qualified Data.ByteString as B
 
--- | A storage backend.
-class Store s where
-    -- | @'saveBlock' store block@ Saves @block@ to the store. If the block
-    -- is already present, this is a no-op.
-    saveBlock :: s -> HashedBlock -> IO ()
-    -- @'loadBlock' store digest@ returns the block corresponding to the
-    -- given sha256 hash from the store.
-    loadBlock :: s -> Hash -> IO Block
-    -- | @'loadTag' store tagname@ loads the FileRef for the given tag.
-    loadTag   :: s -> String -> IO FileRef
-    -- | @'saveTag' store tagname ref@ saves @ref@ under the given tag.
-    saveTag   :: s -> String -> FileRef -> IO ()
-    -- | Close the store, flushing the metadata to disk.
-    closeStore :: s -> IO ()
-    -- | Open the store located at the given path, creating it if needed.
-    openStore :: FilePath -> IO s
-
 -- | newtype wrapper around a disk/storage block.
 newtype Block = Block B.ByteString
     deriving(Show, Eq, Generic)
