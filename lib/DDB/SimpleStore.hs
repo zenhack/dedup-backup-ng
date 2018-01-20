@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards #-}
-module DDB.SimpleStore (SimpleStore, simpleStore, initStore) where
+module DDB.SimpleStore (SimpleStore, simpleStore) where
 
 import DDB
 import DDB.Types
@@ -23,7 +23,7 @@ simpleStore = simpleStore
 
 data SimpleStore = SimpleStore FilePath
 
-instance Store SimpleStore  where
+instance Store SimpleStore where
     saveBlock (SimpleStore storePath) (HashedBlock digest (Block bytes)) =
         saveFile (blockPath storePath digest) bytes
     loadBlock (SimpleStore storePath) digest =
@@ -32,6 +32,16 @@ instance Store SimpleStore  where
         LBS.writeFile (tagPath storePath tagname) (serialise ref)
     loadTag (SimpleStore storePath) tagname =
         deserialise <$> LBS.readFile (tagPath storePath tagname)
+    closeStore _ =
+        return ()
+    openStore dir = do
+        forM_ [0,1..0xff] $ \n -> do
+            createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
+        createDirectoryIfMissing True $ dir ++ "/tags"
+        let store = SimpleStore dir
+        saveBlock store zeroBlock
+        return store
+
 
 -- | @'blockPath' storePath digest@ is the file name in which the block with
 -- sha256 hash @digest@ should be saved within the store.
@@ -42,17 +52,6 @@ blockPath storePath (Hash digest) =
 
 tagPath :: FilePath -> String -> FilePath
 tagPath storePath tagname = storePath ++ "/tags/" ++ tagname
-
--- | @'initStore' dir@ creates the directory structure necessary for
--- storage in the directory @dir@. It returns a refernce to the Store.
-initStore :: FilePath -> IO SimpleStore
-initStore dir = do
-    forM_ [0,1..0xff] $ \n -> do
-        createDirectoryIfMissing True $ printf "%s/sha256/%02x" dir (n :: Int)
-    createDirectoryIfMissing True $ dir ++ "/tags"
-    let store = SimpleStore dir
-    saveBlock store zeroBlock
-    return store
 
 -- Save the provided ByteString to the named file, if the file does
 -- not already exist. If it does exist, this is a no-op.

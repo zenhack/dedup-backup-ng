@@ -95,37 +95,35 @@ instance Store NewStore where
     loadTag NewStore{..} tagname =
         deserialise <$> LBS.readFile (tagPath storePath tagname)
 
+    closeStore NewStore{..} = do
+        m <- readIORef metadata
+        hClose handle
+        atomicWriteFile (metadataPath storePath) (serialise m)
+
+    openStore storePath = do
+        handle <- openBinaryFile (blobsPath storePath) ReadWriteMode
+        metadata <- loadMetadata
+        -- TODO: truncate to indicated size and seek there.
+        hSeek handle SeekFromEnd 0
+        return NewStore{..}
+      where
+        loadMetadata = do
+            value <- (deserialise <$> LBS.readFile (metadataPath storePath))
+                -- TODO: check the type of error:
+                `catch`
+                ((\_ -> return MetaData
+                            { offset = 0
+                            , index = M.empty
+                            }) :: IOError -> IO MetaData)
+            newIORef value
+
+
 tagPath :: FilePath -> String -> FilePath
 tagPath storePath tagname = storePath ++ "/tags/" ++ tagname
 
-indexPath, blobsPath :: FilePath -> FilePath
-indexPath = (++ "/index")
+metadataPath, blobsPath :: FilePath -> FilePath
+metadataPath = (++ "/metadata.cbor")
 blobsPath = (++ "/blobs-sha256")
-
-openStore :: FilePath -> IO NewStore
-openStore storePath = do
-    handle <- openBinaryFile (blobsPath storePath) ReadWriteMode
-    metadata <- loadMetadata
-    -- TODO: truncate to indicated size and seek there.
-    hSeek handle SeekFromEnd 0
-    return NewStore{..}
-  where
-    loadMetadata = do
-        value <- (deserialise <$> LBS.readFile (indexPath storePath))
-            -- TODO: check the type of error:
-            `catch`
-            ((\_ -> return MetaData
-                        { offset = 0
-                        , index = M.empty
-                        }) :: IOError -> IO MetaData)
-        newIORef value
-
--- | Close the store, flushing the metadata to disk.
-closeStore :: NewStore -> IO ()
-closeStore NewStore{..} = do
-    m <- readIORef metadata
-    hClose handle
-    atomicWriteFile (indexPath storePath) (serialise m)
 
 -- | @'atomicWriteFile path bytes@ writes @bytes@ to the file @path@,
 -- atomically. It does so by writing to a different file, then using

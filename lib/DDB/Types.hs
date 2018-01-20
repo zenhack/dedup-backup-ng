@@ -22,6 +22,10 @@ class Store s where
     loadTag   :: s -> String -> IO FileRef
     -- | @'saveTag' store tagname ref@ saves @ref@ under the given tag.
     saveTag   :: s -> String -> FileRef -> IO ()
+    -- | Close the store, flushing the metadata to disk.
+    closeStore :: s -> IO ()
+    -- | Open the store located at the given path, creating it if needed.
+    openStore :: FilePath -> IO s
 
 -- | newtype wrapper around a disk/storage block.
 newtype Block = Block B.ByteString

@@ -2,6 +2,7 @@ module Cli where
 
 import DDB
 import DDB.SimpleStore
+import DDB.Types
 import Options.Applicative
 
 import Control.Monad    (void)
@@ -69,7 +70,7 @@ runCommand :: FilePath -> Command -> IO ()
 runCommand storePath Tags = do
     contents <- listDirectory (storePath ++ "/tags")
     mapM_ putStrLn contents
-runCommand storePath Init = void $ initStore storePath
+runCommand storePath Init = void $ (openStore storePath :: IO SimpleStore)
 runCommand storePath (Save target tagname) =
     makeSnapshot (simpleStore storePath) target tagname
 runCommand storePath (Restore target tagname) =
