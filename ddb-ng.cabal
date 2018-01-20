@@ -68,6 +68,7 @@ test-suite tests
     , mtl
     , exceptions
     , filepath
+    , Diff
   hs-source-dirs: tests
   ghc-options:
     -Wall
