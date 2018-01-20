@@ -2,7 +2,6 @@ module Main where
 
 import DDB
 import DDB.NewStore
-import DDB.SimpleStore
 import DDB.Types
 
 import Control.Monad                        (replicateM, when)
