@@ -106,9 +106,6 @@ instance Store NewStore where
 
     openStore storePath = do
         createDirectoryIfMissing True $ storePath ++ "/tags"
-        -- make sure the store file exists:
-        bracket (P.createFile (blobsPath storePath) 0o600) P.closeFd (\_ -> pure ())
-            `catch` (\e -> unless (isAlreadyExistsError e) $ throwIO e)
         handle <- openBinaryFile (blobsPath storePath) ReadWriteMode
         metadata <- loadMetadata
         -- TODO: truncate to indicated size and seek there.
