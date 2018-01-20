@@ -35,7 +35,7 @@ import System.IO
     , hSeek
     , openBinaryFile
     )
-import System.IO.Error    (isAlreadyExistsError)
+import System.IO.Error    (isAlreadyExistsError, isDoesNotExistError)
 import System.Posix.Files (rename)
 
 import qualified System.Posix.IO as P
@@ -117,9 +117,10 @@ instance Store NewStore where
       where
         loadMetadata = do
             value <- (deserialise <$> LBS.readFile (metadataPath storePath))
-                -- TODO: check the type of error:
                 `catch`
-                ((\_ -> return MetaData
+                ((\e -> do
+                    unless (isDoesNotExistError e) $ throwIO e
+                    return MetaData
                             { offset = 0
                             , index = M.empty
                             }) :: IOError -> IO MetaData)
