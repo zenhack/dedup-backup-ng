@@ -21,7 +21,7 @@ module DDB.NewStore where
 import DDB.Types
 
 import Codec.Serialise    (Serialise, deserialise, serialise)
-import Control.Exception  (bracket, catch, throwIO)
+import Control.Exception  (catch, throwIO)
 import Control.Monad      (unless)
 import Data.IORef         (IORef, newIORef, readIORef, writeIORef)
 import Data.Word          (Word64)
@@ -35,10 +35,8 @@ import System.IO
     , hSeek
     , openBinaryFile
     )
-import System.IO.Error    (isAlreadyExistsError, isDoesNotExistError)
+import System.IO.Error    (isDoesNotExistError)
 import System.Posix.Files (rename)
-
-import qualified System.Posix.IO as P
 
 import qualified Data.ByteString      as B
 import qualified Data.ByteString.Lazy as LBS
