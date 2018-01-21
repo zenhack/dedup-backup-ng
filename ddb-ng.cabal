@@ -68,6 +68,7 @@ test-suite tests
     , exceptions
     , filepath
     , Diff
+    , process
   hs-source-dirs: tests
   ghc-options:
     -Wall

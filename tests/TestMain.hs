@@ -6,6 +6,8 @@ import DDB.Types
 
 import Control.Monad                        (replicateM, when)
 import Data.Algorithm.Diff                  (Diff(..), getGroupedDiff)
+import Data.Function                        ((&))
+import System.Process                       (readProcess)
 import System.Unix.Directory                (withTemporaryDirectory)
 import Test.Framework                       (defaultMain)
 import Test.Framework.Providers.QuickCheck2 (testProperty)
@@ -27,6 +29,27 @@ genBlob = do
 --    numBytes <- choose (0 :: Int, 4 * 1024 * 1024)
     numBytes <- choose (0 :: Int, 1024)
     B.pack <$> replicateM numBytes arbitrary
+
+genMTree :: FilePath -> IO String
+genMTree path = readProcess "bsdtar" ["-cf", "-", "--format=mtree", path] ""
+
+normalize byPath mtreeLine =
+    -- Since we get mtrees on the same contents under two different paths,
+    -- we need to strip off the path prefixes:
+    stripMTreePrefix byPath mtreeLine &
+    words &
+    -- I don't fully understand what the "flags" are, but we don't track them:
+    filter (not . startsWith "flags=") &
+    -- The time field is predictably non-deterministic:
+    filter (not . startsWith "time=") &
+    unwords
+
+startsWith prefix txt = take (length prefix) txt == prefix
+
+stripMTreePrefix :: FilePath -> String -> String
+-- TODO: make this more precise
+stripMTreePrefix path ('.':txt) | startsWith path txt = '.' : drop (length path) txt
+stripMTreePrefix _ txt          = txt
 
 saveRestoreBlob :: FilePath -> B.ByteString -> IO Bool
 saveRestoreBlob path blob = do
@@ -59,6 +82,26 @@ saveRestoreBlob path blob = do
     -- XXX: this is a bit wrong; we're ignoring the second part.
     chunkSize (Both x _) = length x
 
+saveRestorePath oldPath tempPath = do
+    mtreeOld <- lines <$> genMTree oldPath
+    let storePath = tempPath ++ "/store"
+        newPath = tempPath ++ "/new"
+    store <- openStore storePath
+    ref <- storeFile store oldPath
+    extractFile store ref newPath
+    mtreeNew <- lines <$> genMTree newPath
+    let mtreeOldNorm = map (normalize oldPath) mtreeOld
+        mtreeNewNorm = map (normalize newPath) mtreeNew
+        result = mtreeOldNorm == mtreeNewNorm
+    when (not result) $ do
+        let diff = getGroupedDiff mtreeOldNorm mtreeNewNorm
+        putStrLn "Mtrees differ:"
+        putStrLn ""
+        mapM_ print diff
+        putStrLn ""
+        mapM_ putStrLn mtreeNew
+    return result
+
 prop_saveRestoreBlob :: Property
 prop_saveRestoreBlob = monadicIO $ do
     blob <- pick genBlob
@@ -66,8 +109,13 @@ prop_saveRestoreBlob = monadicIO $ do
             saveRestoreBlob path blob
 
 main :: IO ()
-main = defaultMain
-    [ testProperty
-        "saving and then restoring a blob produces the same bytes."
-        prop_saveRestoreBlob
-    ]
+main = do
+    -- TODO: make this first part a proper test
+    withTemporaryDirectory "/tmp/store.XXXXXX" $ \path -> do
+        True <- saveRestorePath "." path
+        return ()
+    defaultMain
+        [ testProperty
+            "saving and then restoring a blob produces the same bytes."
+            prop_saveRestoreBlob
+        ]
