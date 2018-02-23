@@ -20,13 +20,14 @@ module DDB.Store where
 
 import DDB.Types
 
-import Codec.Serialise    (Serialise, deserialise, serialise)
-import Control.Exception  (catch, throwIO)
-import Control.Monad      (unless)
-import Data.IORef         (IORef, newIORef, readIORef, writeIORef)
-import Data.Word          (Word64)
-import GHC.Generics       (Generic)
-import System.Directory   (createDirectoryIfMissing)
+import Codec.Compression.GZip (compress, decompress)
+import Codec.Serialise        (Serialise, deserialise, serialise)
+import Control.Exception      (catch, throwIO)
+import Control.Monad          (unless)
+import Data.IORef             (IORef, newIORef, readIORef, writeIORef)
+import Data.Word              (Word64)
+import GHC.Generics           (Generic)
+import System.Directory       (createDirectoryIfMissing)
 import System.IO
     ( Handle
     , IOMode(ReadWriteMode)
@@ -35,8 +36,8 @@ import System.IO
     , hSeek
     , openBinaryFile
     )
-import System.IO.Error    (isDoesNotExistError)
-import System.Posix.Files (rename)
+import System.IO.Error        (isDoesNotExistError)
+import System.Posix.Files     (rename)
 
 import qualified Data.ByteString      as B
 import qualified Data.ByteString.Lazy as LBS
@@ -69,15 +70,16 @@ data Store = Store
 -- | @'saveBlock' store block@ saves @block@ to the store. If the block
 -- is already present, this is a no-op.
 saveBlock :: Store -> HashedBlock -> IO ()
-saveBlock Store{..} (HashedBlock digest (Block bytes)) = do
+saveBlock Store{..} (HashedBlock digest (Block uncompressedBytes)) = do
     m@MetaData{..} <- readIORef metadata
+    let bytes = compress $ LBS.fromStrict uncompressedBytes
     unless (digest `M.member` index) $ do
-        B.hPut handle bytes
+        LBS.hPut handle bytes
         writeIORef metadata $
-            m { offset = offset + fromIntegral (B.length bytes)
+            m { offset = offset + fromIntegral (LBS.length bytes)
               , index = M.insert
                     digest
-                    (offset, fromIntegral $ B.length bytes)
+                    (offset, fromIntegral $ LBS.length bytes)
                     index
               }
 
@@ -94,7 +96,8 @@ loadBlock Store{..} digest = do
             --
             -- https://github.com/haskell/unix/issues/105
             hSeek handle AbsoluteSeek (fromIntegral blobOffset)
-            bytes <- B.hGet handle (fromIntegral blobSize)
+            compressedBytes <- LBS.hGet handle (fromIntegral blobSize)
+            let bytes = LBS.toStrict $ decompress compressedBytes
             hSeek handle AbsoluteSeek (fromIntegral offset)
             return $ Block bytes
 
