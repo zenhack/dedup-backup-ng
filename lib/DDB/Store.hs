@@ -1,5 +1,5 @@
-{-# LANGUAGE DeriveGeneric   #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DeriveGeneric  #-}
+{-# LANGUAGE NamedFieldPuns #-}
 module DDB.Store where
 -- TODO: update this comment now that there are no other storage backends.
 --
@@ -70,8 +70,8 @@ data Store = Store
 -- | @'saveBlock' store block@ saves @block@ to the store. If the block
 -- is already present, this is a no-op.
 saveBlock :: Store -> HashedBlock -> IO ()
-saveBlock Store{..} (HashedBlock digest (Block uncompressedBytes)) = do
-    m@MetaData{..} <- readIORef metadata
+saveBlock Store{handle, metadata} (HashedBlock digest (Block uncompressedBytes)) = do
+    m@MetaData{offset, index} <- readIORef metadata
     let bytes = compress $ LBS.fromStrict uncompressedBytes
     unless (digest `M.member` index) $ do
         LBS.hPut handle bytes
@@ -86,8 +86,8 @@ saveBlock Store{..} (HashedBlock digest (Block uncompressedBytes)) = do
 -- @'loadBlock' store digest@ returns the block corresponding to the
 -- given sha256 hash from the store.
 loadBlock :: Store -> Hash -> IO Block
-loadBlock Store{..} digest = do
-    MetaData{..} <- readIORef metadata
+loadBlock Store{handle, metadata} digest = do
+    MetaData{offset, index} <- readIORef metadata
     case M.lookup digest index of
         Nothing -> error "TODO: throw a proper exception"
         Just (blobOffset, blobSize) -> do
@@ -103,17 +103,17 @@ loadBlock Store{..} digest = do
 
 -- | @'saveTag' store tagname ref@ saves @ref@ under the given tag.
 saveTag :: Store -> String -> FileRef -> IO ()
-saveTag Store{..} tagname ref =
+saveTag Store{storePath} tagname ref =
     LBS.writeFile (tagPath storePath tagname) (serialise ref)
 
 -- | @'loadTag' store tagname@ loads the FileRef for the given tag.
 loadTag :: Store -> String -> IO FileRef
-loadTag Store{..} tagname =
+loadTag Store{storePath} tagname =
     deserialise <$> LBS.readFile (tagPath storePath tagname)
 
 -- | Close the store, flushing the metadata to disk.
 closeStore :: Store -> IO ()
-closeStore Store{..} = do
+closeStore Store{storePath, handle, metadata} = do
     m <- readIORef metadata
     hClose handle
     atomicWriteFile (metadataPath storePath) (serialise m)
@@ -126,7 +126,7 @@ openStore storePath = do
     metadata <- loadMetadata
     -- TODO: truncate to indicated size and seek there.
     hSeek handle SeekFromEnd 0
-    return Store{..}
+    return Store{handle, metadata, storePath}
   where
     loadMetadata = do
         value <- (deserialise <$> LBS.readFile (metadataPath storePath))
