@@ -81,7 +81,7 @@ hashSize = 256 `div` 8
 hash :: Block -> HashedBlock
 hash block@(Block bytes) = HashedBlock (Hash (SHA256.hash bytes)) block
 
-decodeStreaming :: Serialise a => ConduitM B.ByteString a IO ()
+decodeStreaming :: Serialise a => ConduitT B.ByteString a IO ()
 decodeStreaming = decodeIO >>= go
   where
     decodeIO = liftIO $ stToIO $ deserialiseIncremental
@@ -131,7 +131,7 @@ loadBlob store (BlobRef n digest) = do
 
 -- | Pack incoming ByteStrings into as few blocks as possible.
 -- Note that this will not split values, only coalesce them.
-collectBlocks :: Monad m => ConduitM B.ByteString Block m ()
+collectBlocks :: Monad m => ConduitT B.ByteString Block m ()
 collectBlocks = go 0 mempty where
     go bufSize buf = do
         chunk <- await
@@ -148,7 +148,7 @@ collectBlocks = go 0 mempty where
     yieldBlock = yield . Block . LBS.toStrict . Builder.toLazyByteString
 
 -- | Save all blocks in the stream to the store, and pass them along.
-saveBlocks :: Store -> ConduitM HashedBlock HashedBlock IO ()
+saveBlocks :: Store -> ConduitT HashedBlock HashedBlock IO ()
 saveBlocks store = iterMC (saveBlock store)
 
 -- | 'buildTree' builds the tree for a blob consisting of the incoming (leaf)
@@ -175,7 +175,7 @@ buildTree store = mapC hash .| saveBlocks store .| go 1
 -- nodes are emitted.
 --
 -- Note that this only generates one layer of nodes; see 'buildTree'.
-buildNodes :: Monad m => ConduitM HashedBlock HashedBlock m ()
+buildNodes :: Monad m => ConduitT HashedBlock HashedBlock m ()
 buildNodes
     = mapC (\(HashedBlock (Hash digest) _) -> digest)
     .| collectBlocks
@@ -217,7 +217,7 @@ storeFile store filename = do
         -- TODO: separate out individual file types and give each a name.
         return $ Left (UnsupportedFileType "unknown")
 
-copyRights :: Monad m => ConduitM (Either e v) v m ()
+copyRights :: Monad m => ConduitT (Either e v) v m ()
 copyRights = await >>= \case
     Nothing ->
         pure ()
