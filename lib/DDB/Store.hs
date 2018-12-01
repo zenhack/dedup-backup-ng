@@ -39,7 +39,6 @@ import System.IO
 import System.IO.Error        (isDoesNotExistError)
 import System.Posix.Files     (rename)
 
-import qualified Data.ByteString      as B
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.HashMap.Strict  as M
 
