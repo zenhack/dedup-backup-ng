@@ -44,7 +44,7 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.HashMap.Strict  as M
 
 data MetaData = MetaData
-    { offset :: Word64
+    { offset :: !Word64
     -- ^ The offset of the end of the data. Storing this means that if we
     -- fail in the middle of a run, nothing is changed; we have some garbage at
     -- the end of the blob file, but we just truncate to the appropriate
@@ -75,7 +75,7 @@ saveBlock Store{..} (HashedBlock digest (Block uncompressedBytes)) = do
     let bytes = compress $ LBS.fromStrict uncompressedBytes
     unless (digest `M.member` index) $ do
         LBS.hPut handle bytes
-        writeIORef metadata $
+        writeIORef metadata $!
             m { offset = offset + fromIntegral (LBS.length bytes)
               , index = M.insert
                     digest
