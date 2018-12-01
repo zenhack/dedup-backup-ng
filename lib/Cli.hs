@@ -2,11 +2,9 @@ module Cli where
 
 import DDB
 import DDB.Store
-import DDB.Types
 import Options.Applicative
 
 import Control.Exception (bracket)
-import Control.Monad     (void)
 import Data.Monoid       (mempty, (<>))
 import System.Directory  (listDirectory)
 
