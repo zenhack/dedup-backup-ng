@@ -12,8 +12,14 @@ import System.Directory  (listDirectory)
 
 data Command
     = Tags
-    | Save FilePath String
-    | Restore FilePath String
+    | Save
+        { saveTarget :: FilePath
+        , saveTag    :: String
+        }
+    | Restore
+        { restoreTarget :: FilePath
+        , restoreTag    :: String
+        }
     | Init
     deriving(Show, Read, Eq)
 
