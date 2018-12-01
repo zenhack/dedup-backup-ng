@@ -101,7 +101,7 @@ decodeStreaming = decodeIO >>= go
 --
 -- TODO: there's probably a library function that does this; we should
 -- look for for that and use it instead.
-hBlocks :: Handle -> Source IO Block
+hBlocks :: Handle -> ConduitT i Block IO ()
 hBlocks handle = do
     bytes <- lift $ B.hGet handle blockSize
     when (bytes /= B.empty) $ do
@@ -116,7 +116,7 @@ saveBlob :: Store -> Handle -> IO BlobRef
 saveBlob store h = runConduit $ hBlocks h .| buildTree store
 
 -- Load a blob from disk.
-loadBlob :: Store -> BlobRef -> Producer IO B.ByteString
+loadBlob :: Store -> BlobRef -> ConduitT i B.ByteString IO ()
 loadBlob store (BlobRef 1 digest) = do
     Block bytes <- lift $ loadBlock store digest
     yield bytes
@@ -153,7 +153,7 @@ saveBlocks store = iterMC (saveBlock store)
 
 -- | 'buildTree' builds the tree for a blob consisting of the incoming (leaf)
 -- blocks. Returns a BlobRef to the root of the tree.
-buildTree :: Store -> Consumer Block IO BlobRef
+buildTree :: Store -> ConduitT Block o IO BlobRef
 buildTree store = mapC hash .| saveBlocks store .| go 1
   where
     go n = do
