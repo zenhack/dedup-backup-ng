@@ -58,7 +58,7 @@ saveRestoreBlob path blob = do
         storePath = path ++ "/store"
     B.writeFile oldPath blob
     store <- openStore storePath
-    ref <- storeFile store oldPath
+    Right ref <- storeFile store oldPath
     closeStore store
     store' <- openStore storePath
     extractFile store' ref newPath
@@ -87,7 +87,7 @@ saveRestorePath oldPath tempPath = do
     let storePath = tempPath ++ "/store"
         newPath = tempPath ++ "/new"
     store <- openStore storePath
-    ref <- storeFile store oldPath
+    Right ref <- storeFile store oldPath
     extractFile store ref newPath
     mtreeNew <- lines <$> genMTree newPath
     let mtreeOldNorm = map (normalize oldPath) mtreeOld

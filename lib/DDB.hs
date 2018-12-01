@@ -27,6 +27,7 @@
 -- knowing the hash of the root block of its tree, and the depth of the tree.
 {-# LANGUAGE DeriveGeneric   #-}
 {-# LANGUAGE DoAndIfThenElse #-}
+{-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE Rank2Types      #-}
 {-# LANGUAGE RecordWildCards #-}
 module DDB where
@@ -46,7 +47,8 @@ import Data.Monoid           ((<>))
 import Foreign.C.Types       (CTime(..))
 import System.Directory      (createDirectoryIfMissing, listDirectory)
 import System.FilePath.Posix (takeFileName)
-import System.IO             (Handle, IOMode(..), hClose, openBinaryFile)
+import System.IO
+    (Handle, IOMode(..), hClose, hPutStrLn, openBinaryFile, stderr)
 import System.Posix.Types    (CGid(..), CMode(..), CUid(..))
 
 import qualified Data.ByteString         as B
@@ -54,7 +56,6 @@ import qualified Data.ByteString.Builder as Builder
 import qualified Data.ByteString.Char8   as B8
 import qualified Data.ByteString.Lazy    as LBS
 import qualified System.Posix.Files      as P
-
 
 -- | A HashedBlock for the zero-length block.
 zeroBlock :: HashedBlock
@@ -180,7 +181,7 @@ buildNodes
     .| collectBlocks
     .| mapC hash
 
-storeFile :: Store -> FilePath -> IO FileRef
+storeFile :: Store -> FilePath -> IO (Either UnsupportedFileType FileRef)
 storeFile store filename = do
     status <- P.getSymbolicLinkStatus filename
     let meta = status2Meta status
@@ -188,31 +189,51 @@ storeFile store filename = do
         bracket
             (openBinaryFile filename ReadMode)
             hClose
-            (\h -> RegFile meta <$> saveBlob store h)
+            (\h -> Right . RegFile meta <$> saveBlob store h)
     else if P.isSymbolicLink status then do
         target <- P.readSymbolicLink filename
-        return (SymLink $ B8.pack target)
+        return $ Right $ SymLink (B8.pack target)
     else if P.isDirectory status then do
         files <- listDirectory filename
         blobRef <- runConduit $
             yieldMany files
             .| mapMC (\name -> do
-                fileRef <- storeFile store (filename ++ "/" ++ name)
-                return $ DirEnt
-                    { entName = B8.pack $ takeFileName name
-                    , entRef = fileRef
-                    })
+                ret <- storeFile store (filename ++ "/" ++ name)
+                case ret of
+                    Left (UnsupportedFileType typeName) -> do
+                        hPutStrLn stderr $ "Warning: unsupported file type; skipping."
+                        return $ Left $ UnsupportedFileType typeName
+                    Right fileRef ->
+                        return $ Right DirEnt
+                            { entName = B8.pack $ takeFileName name
+                            , entRef = fileRef
+                            })
+            .| copyRights
             .| mapC (LBS.toStrict . serialise)
             .| collectBlocks
             .| buildTree store
-        return $ Dir meta blobRef
+        return $ Right $ Dir meta blobRef
     else
-        throwM $ userError "Unsupported file type."
+        -- TODO: separate out individual file types and give each a name.
+        return $ Left (UnsupportedFileType "unknown")
+
+copyRights :: Monad m => ConduitM (Either e v) v m ()
+copyRights = await >>= \case
+    Nothing ->
+        pure ()
+    Just (Left _) ->
+        copyRights
+    Just (Right v) -> do
+        yield v
+        copyRights
 
 makeSnapshot :: Store -> FilePath -> String -> IO ()
-makeSnapshot store path tagname = do
-    ref <- storeFile store path
-    saveTag store tagname ref
+makeSnapshot store path tagname =
+    storeFile store path >>= \case
+        Left (UnsupportedFileType typ) ->
+            throwM $ userError $ "Unknown file type: " <> typ
+        Right ref ->
+            saveTag store tagname ref
 
 restoreSnapshot :: Store -> String -> FilePath -> IO ()
 restoreSnapshot store tagname path = do

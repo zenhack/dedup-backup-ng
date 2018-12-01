@@ -10,6 +10,8 @@ import GHC.Generics    (Generic)
 
 import qualified Data.ByteString as B
 
+newtype UnsupportedFileType = UnsupportedFileType String
+
 -- | newtype wrapper around a disk/storage block.
 newtype Block = Block B.ByteString
     deriving(Show, Eq, Generic)
