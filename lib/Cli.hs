@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns #-}
 module Cli where
 
 import DDB
@@ -11,12 +12,13 @@ import System.Directory  (listDirectory)
 data Command
     = Tags
     | Save
-        { saveTarget :: FilePath
-        , saveTag    :: String
+        { saveTarget  :: FilePath
+        , saveTagname :: String
+        , thirdLeg    :: Maybe FilePath
         }
     | Restore
-        { restoreTarget :: FilePath
-        , restoreTag    :: String
+        { restoreTarget  :: FilePath
+        , restoreTagname :: String
         }
     | Init
     deriving(Show, Read, Eq)
@@ -57,6 +59,15 @@ cmdParser = (,)
                             <> metavar "TAG"
                             <> help "The tag to reference the snapshot by."
                             )
+                        <*> ( ( Just <$> strOption
+                                    ( long "third-leg"
+                                    <> metavar "THIRD LEG"
+                                    -- TODO: document this feature more fully.
+                                    <> help "Third leg"
+                                    )
+                                )
+                                <|> pure Nothing
+                            )
                     )
                     (progDesc "Save a snapshot.")
                 )
@@ -88,10 +99,11 @@ runCommand storePath Tags = do
     contents <- listDirectory (storePath ++ "/tags")
     mapM_ putStrLn contents
 runCommand storePath Init = withStore storePath (\_ -> pure ())
-runCommand storePath (Save target tagname) = withStore storePath $ \store ->
-    makeSnapshot store target tagname
-runCommand storePath (Restore target tagname) = withStore storePath $ \store ->
-    restoreSnapshot store tagname target
+runCommand storePath Save{saveTarget, saveTagname} = withStore storePath $ \store ->
+    makeSnapshot store saveTarget saveTagname
+runCommand storePath Restore{restoreTarget, restoreTagname} =
+    withStore storePath $ \store ->
+        restoreSnapshot store restoreTagname restoreTarget
 
 -- TODO: this doesn't belong here; put it in a different module.
 withStore :: FilePath -> (Store -> IO a) -> IO a
