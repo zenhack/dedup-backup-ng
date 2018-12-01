@@ -20,51 +20,61 @@ data Command
 cmdParser :: Parser (FilePath, Command)
 cmdParser = (,)
     <$> strOption
-        ( short 's'
-        <> long "store"
-        <> metavar "STORE"
-        <> help "path to the store"
-        )
+            ( short 's'
+            <> long "store"
+            <> metavar "STORE"
+            <> help "path to the store"
+            )
     <*> ( hsubparser $
             (command "init"
                 (info
                     (pure Init)
-                    (progDesc "Intialize the store")))
+                    (progDesc "Intialize the store")
+                )
+            )
         <> (command "tags"
                 (info
                     (pure Tags)
-                    (progDesc "List tags of snapshots in the store")))
+                    (progDesc "List tags of snapshots in the store")
+                )
+            )
         <> (command "save"
                 (info
                     (Save
                         <$> strOption
-                        ( long "target" -- TODO: not a fan of this name.
-                                        -- maybe this should just be positional?
-                        <> metavar "TARGET"
-                        <> help "The file or directory to back up."
-                        )
+                            ( long "target" -- TODO: not a fan of this name.
+                                            -- maybe this should just be positional?
+                            <> metavar "TARGET"
+                            <> help "The file or directory to back up."
+                            )
                         <*> strOption
-                        ( short 't'
-                        <> long "tag"
-                        <> metavar "TAG"
-                        <> help "The tag to reference the snapshot by."
-                        ))
-                    (progDesc "Save a snapshot.")))
+                            ( short 't'
+                            <> long "tag"
+                            <> metavar "TAG"
+                            <> help "The tag to reference the snapshot by."
+                            )
+                    )
+                    (progDesc "Save a snapshot.")
+                )
+            )
         <> (command "restore"
                 (info
                     (Restore
                         <$> strOption
-                        ( long "target"
-                        <> metavar "TARGET"
-                        <> help "The location to extract to."
-                        )
+                            ( long "target"
+                            <> metavar "TARGET"
+                            <> help "The location to extract to."
+                            )
                         <*> strOption
-                        ( short 't'
-                        <> long "tag"
-                        <> metavar "TAG"
-                        <> help "The tag for the snapshot to restore."
-                        ))
-                    (progDesc "Restore a snapshot.")))
+                            ( short 't'
+                            <> long "tag"
+                            <> metavar "TAG"
+                            <> help "The tag for the snapshot to restore."
+                            )
+                    )
+                    (progDesc "Restore a snapshot.")
+                )
+            )
         )
 
 -- TODO: regression: other than init, each of these should fail if the store
