@@ -2,7 +2,6 @@ module Main where
 
 import DDB
 import DDB.Store
-import DDB.Types
 
 import Control.Monad                        (replicateM, when)
 import Data.Algorithm.Diff                  (Diff(..), getGroupedDiff)
