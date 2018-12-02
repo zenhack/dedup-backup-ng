@@ -108,12 +108,12 @@ hBlocks handle = do
         yield (Block bytes)
         hBlocks handle
 
--- | @'saveBlob' store handle@ saves all blocks read from the handle
--- to the store.
+-- | @'saveBlob' extraIndex store handle@ saves all blocks read from the handle
+-- to the store. @extraIndex@ is the same as the 'Index' paramter to 'saveBlock'.
 --
 -- Returns a BlobRef referencing the blob.
-saveBlob :: Store -> Handle -> IO BlobRef
-saveBlob store h = runConduit $ hBlocks h .| buildTree store
+saveBlob :: Index -> Store -> Handle -> IO BlobRef
+saveBlob extraIndex store h = runConduit $ hBlocks h .| buildTree extraIndex store
 
 -- Load a blob from disk.
 loadBlob :: Store -> BlobRef -> ConduitT i B.ByteString IO ()
@@ -147,14 +147,16 @@ collectBlocks = go 0 mempty where
                         go (B.length bytes) (Builder.byteString bytes)
     yieldBlock = yield . Block . LBS.toStrict . Builder.toLazyByteString
 
--- | Save all blocks in the stream to the store, and pass them along.
-saveBlocks :: Store -> ConduitT HashedBlock HashedBlock IO ()
-saveBlocks store = iterMC (saveBlock store)
+-- | Save all blocks in the stream to the store, and pass them along. The
+-- 'Index' parameter is the same as in 'saveBlock'.
+saveBlocks :: Index -> Store -> ConduitT HashedBlock HashedBlock IO ()
+saveBlocks extraIndex store = iterMC (saveBlock extraIndex store)
 
 -- | 'buildTree' builds the tree for a blob consisting of the incoming (leaf)
--- blocks. Returns a BlobRef to the root of the tree.
-buildTree :: Store -> ConduitT Block o IO BlobRef
-buildTree store = mapC hash .| saveBlocks store .| go 1
+-- blocks. Returns a BlobRef to the root of the tree. The 'Index' parameter
+-- is the same as in 'saveBlock'.
+buildTree :: Index -> Store -> ConduitT Block o IO BlobRef
+buildTree extraIndex store = mapC hash .| saveBlocks extraIndex store .| go 1
   where
     go n = do
         item1 <- await
@@ -167,7 +169,7 @@ buildTree store = mapC hash .| saveBlocks store .| go 1
             (Just block1, Just block2) -> do
                 (yieldMany [block1, block2] >> mapC id)
                 .| buildNodes
-                .| saveBlocks store
+                .| saveBlocks extraIndex store
                 .| go (n+1)
 
 -- | Build interior nodes from the incoming stream. The hashes of the incoming
@@ -181,15 +183,15 @@ buildNodes
     .| collectBlocks
     .| mapC hash
 
-storeFile :: Store -> FilePath -> IO (Either UnsupportedFileType FileRef)
-storeFile store filename = do
+storeFile :: Index -> Store -> FilePath -> IO (Either UnsupportedFileType FileRef)
+storeFile extraIndex store filename = do
     status <- P.getSymbolicLinkStatus filename
     let meta = status2Meta status
     if P.isRegularFile status then
         bracket
             (openBinaryFile filename ReadMode)
             hClose
-            (\h -> Right . RegFile meta <$> saveBlob store h)
+            (\h -> Right . RegFile meta <$> saveBlob extraIndex store h)
     else if P.isSymbolicLink status then do
         target <- P.readSymbolicLink filename
         return $ Right $ SymLink (B8.pack target)
@@ -198,7 +200,7 @@ storeFile store filename = do
         blobRef <- runConduit $
             yieldMany files
             .| mapMC (\name -> do
-                ret <- storeFile store (filename ++ "/" ++ name)
+                ret <- storeFile extraIndex store (filename ++ "/" ++ name)
                 case ret of
                     Left (UnsupportedFileType typeName) -> do
                         hPutStrLn stderr $ "Warning: unsupported file type; skipping."
@@ -211,7 +213,7 @@ storeFile store filename = do
             .| copyRights
             .| mapC (LBS.toStrict . serialise)
             .| collectBlocks
-            .| buildTree store
+            .| buildTree extraIndex store
         return $ Right $ Dir meta blobRef
     else
         -- TODO: separate out individual file types and give each a name.
@@ -227,9 +229,9 @@ copyRights = await >>= \case
         yield v
         copyRights
 
-makeSnapshot :: Store -> FilePath -> String -> IO ()
-makeSnapshot store path tagname =
-    storeFile store path >>= \case
+makeSnapshot :: Index -> Store -> FilePath -> String -> IO ()
+makeSnapshot extraIndex store path tagname =
+    storeFile extraIndex store path >>= \case
         Left (UnsupportedFileType typ) ->
             throwM $ userError $ "Unknown file type: " <> typ
         Right ref ->

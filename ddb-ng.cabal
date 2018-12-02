@@ -59,6 +59,7 @@ test-suite tests
   build-depends:
       base
     , ddb-ng-lib
+    , unordered-containers
     , test-framework
     , test-framework-quickcheck2
     , QuickCheck

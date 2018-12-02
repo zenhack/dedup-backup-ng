@@ -43,13 +43,15 @@ import System.Posix.Files     (rename)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.HashMap.Strict  as M
 
+type Index = M.HashMap Hash (Word64, Word64)
+
 data MetaData = MetaData
     { offset :: !Word64
     -- ^ The offset of the end of the data. Storing this means that if we
     -- fail in the middle of a run, nothing is changed; we have some garbage at
     -- the end of the blob file, but we just truncate to the appropriate
     -- position on the next run.
-    , index  :: M.HashMap Hash (Word64, Word64)
+    , index  :: Index
     -- ^ Index mapping hashes to ranges in the blob file.
     }
     deriving(Show, Eq, Generic)
@@ -67,13 +69,21 @@ data Store = Store
     }
 
 
--- | @'saveBlock' store block@ saves @block@ to the store. If the block
+-- | @'saveBlock' index store block@ saves @block@ to the store. If the block
 -- is already present, this is a no-op.
-saveBlock :: Store -> HashedBlock -> IO ()
-saveBlock Store{handle, metadata} (HashedBlock digest (Block uncompressedBytes)) = do
+--
+-- The @index@ parameter is an extra index to check for the blocl. If the block
+-- is found in the index, it should not be copied to the store, regardless of
+-- whether it is present there. This exists for use with the --third-leg option;
+-- otherwise it will just be an empty map.
+saveBlock :: Index -> Store -> HashedBlock -> IO ()
+saveBlock
+        extraIndex
+        Store{handle, metadata}
+        (HashedBlock digest (Block uncompressedBytes)) = do
     m@MetaData{offset, index} <- readIORef metadata
     let bytes = compress $ LBS.fromStrict uncompressedBytes
-    unless (digest `M.member` index) $ do
+    unless (digest `M.member` extraIndex || digest `M.member` index) $ do
         LBS.hPut handle bytes
         writeIORef metadata $!
             m { offset = offset + fromIntegral (LBS.length bytes)
@@ -154,7 +164,7 @@ mergeBlocks src@Store{metadata=srcMeta} dest = do
     void $ M.traverseWithKey
         (\hash _ -> do
             block <- loadBlock src hash
-            saveBlock dest HashedBlock
+            saveBlock M.empty dest HashedBlock
                 { blockDigest = hash
                 , blockBytes = block
                 }

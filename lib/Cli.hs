@@ -9,6 +9,8 @@ import Control.Exception (bracket)
 import Data.Monoid       (mempty, (<>))
 import System.Directory  (listDirectory)
 
+import qualified Data.HashMap.Strict as M
+
 data Command
     = Tags
     | Save
@@ -115,7 +117,7 @@ runCommand storePath Tags = do
     mapM_ putStrLn contents
 runCommand storePath Init = withStore storePath (\_ -> pure ())
 runCommand storePath Save{saveTarget, saveTagname} = withStore storePath $ \store ->
-    makeSnapshot store saveTarget saveTagname
+    makeSnapshot M.empty store saveTarget saveTagname
 runCommand storePath Restore{restoreTarget, restoreTagname} =
     withStore storePath $ \store ->
         restoreSnapshot store restoreTagname restoreTarget

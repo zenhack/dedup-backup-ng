@@ -13,7 +13,8 @@ import Test.Framework.Providers.QuickCheck2 (testProperty)
 import Test.QuickCheck                      (Gen, Property, arbitrary, choose)
 import Test.QuickCheck.Monadic              (monadicIO, pick, run)
 
-import qualified Data.ByteString as B
+import qualified Data.ByteString     as B
+import qualified Data.HashMap.Strict as M
 
 -- Generate a bytestring up to 4 MiB in size. This is big enough to test
 -- deep-ish trees without being prohibitive.
@@ -57,7 +58,7 @@ saveRestoreBlob path blob = do
         storePath = path ++ "/store"
     B.writeFile oldPath blob
     store <- openStore storePath
-    Right ref <- storeFile store oldPath
+    Right ref <- storeFile M.empty store oldPath
     closeStore store
     store' <- openStore storePath
     extractFile store' ref newPath
@@ -86,7 +87,7 @@ saveRestorePath oldPath tempPath = do
     let storePath = tempPath ++ "/store"
         newPath = tempPath ++ "/new"
     store <- openStore storePath
-    Right ref <- storeFile store oldPath
+    Right ref <- storeFile M.empty store oldPath
     extractFile store ref newPath
     mtreeNew <- lines <$> genMTree newPath
     let mtreeOldNorm = map (normalize oldPath) mtreeOld
