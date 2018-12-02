@@ -20,6 +20,9 @@ data Command
         { restoreTarget  :: FilePath
         , restoreTagname :: String
         }
+    | Merge
+        { srcStore  :: FilePath
+        }
     | Init
     deriving(Show, Read, Eq)
 
@@ -90,6 +93,18 @@ cmdParser = (,)
                     (progDesc "Restore a snapshot.")
                 )
             )
+        <> (command "merge"
+                (info
+                    (Merge
+                        <$> strOption
+                            ( long "src"
+                            <> metavar "SRC"
+                            <> help "The source to merge data from"
+                            )
+                    )
+                    (progDesc "Merge another store into this one.")
+                )
+            )
         )
 
 -- TODO: regression: other than init, each of these should fail if the store
@@ -104,6 +119,10 @@ runCommand storePath Save{saveTarget, saveTagname} = withStore storePath $ \stor
 runCommand storePath Restore{restoreTarget, restoreTagname} =
     withStore storePath $ \store ->
         restoreSnapshot store restoreTagname restoreTarget
+runCommand destStore Merge{srcStore} = do
+    withStore destStore $ \d ->
+        withStore srcStore $ \s ->
+            mergeStore s d
 
 -- TODO: this doesn't belong here; put it in a different module.
 withStore :: FilePath -> (Store -> IO a) -> IO a

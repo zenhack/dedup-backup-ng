@@ -23,11 +23,12 @@ import DDB.Types
 import Codec.Compression.GZip (compress, decompress)
 import Codec.Serialise        (Serialise, deserialise, serialise)
 import Control.Exception      (catch, throwIO)
-import Control.Monad          (unless)
+import Control.Monad          (unless, void)
+import Data.Foldable          (traverse_)
 import Data.IORef             (IORef, newIORef, readIORef, writeIORef)
 import Data.Word              (Word64)
 import GHC.Generics           (Generic)
-import System.Directory       (createDirectoryIfMissing)
+import System.Directory       (createDirectoryIfMissing, listDirectory)
 import System.IO
     ( Handle
     , IOMode(ReadWriteMode)
@@ -139,6 +140,40 @@ openStore storePath = do
         newIORef value
 
 
+-- | @'mergeStore' src dest@ adds all of the blocks and tags from src to dest.
+-- If any of the tags already exist, they are overwritten. TODO: this is not
+-- the best behavior; come up with and implement something better.
+mergeStore :: Store -> Store -> IO ()
+mergeStore src dest = do
+    mergeBlocks src dest
+    mergeTags src dest
+
+mergeBlocks :: Store -> Store -> IO ()
+mergeBlocks src@Store{metadata=srcMeta} dest = do
+    srcIndex <- index <$> readIORef srcMeta
+    void $ M.traverseWithKey
+        (\hash _ -> do
+            block <- loadBlock src hash
+            saveBlock dest HashedBlock
+                { blockDigest = hash
+                , blockBytes = block
+                }
+        )
+        srcIndex
+
+mergeTags :: Store -> Store -> IO ()
+mergeTags src dest = do
+    tags <- listTags src
+    traverse_
+        (\tag -> do
+            ref <- loadTag src tag
+            saveTag dest tag ref)
+        tags
+
+listTags :: Store -> IO [String]
+listTags Store{storePath} =
+    listDirectory (storePath ++ "/tags")
+
 tagPath :: FilePath -> String -> FilePath
 tagPath storePath tagname = storePath ++ "/tags/" ++ tagname
 
@@ -146,7 +181,7 @@ metadataPath, blobsPath :: FilePath -> FilePath
 metadataPath = (++ "/metadata.cbor")
 blobsPath = (++ "/blobs-sha256")
 
--- | @'atomicWriteFile path bytes@ writes @bytes@ to the file @path@,
+-- | @'atomicWriteFile' path bytes@ writes @bytes@ to the file @path@,
 -- atomically. It does so by writing to a different file, then using
 -- 'rename' to move it.
 atomicWriteFile :: FilePath -> LBS.ByteString -> IO ()
